@@ -15,3 +15,17 @@ export function timeAgo(iso: string, now = Date.now()): string {
   if (seconds < 86_400) return `${Math.floor(seconds / 3600)} h ago`;
   return new Date(iso).toLocaleString();
 }
+
+/** "in 25 s", "in 3 min", "now" — for scheduled retries. */
+export function timeUntil(iso: string, now = Date.now()): string {
+  const seconds = Math.round((new Date(iso).getTime() - now) / 1000);
+  if (seconds <= 0) return 'now';
+  if (seconds < 60) return `in ${seconds} s`;
+  if (seconds < 3600) return `in ${Math.ceil(seconds / 60)} min`;
+  return `at ${new Date(iso).toLocaleString()}`;
+}
+
+export function formatDuration(ms: number | null): string {
+  if (ms === null) return '—';
+  return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
+}

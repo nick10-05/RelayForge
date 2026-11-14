@@ -132,7 +132,9 @@ describe('logs never contain secrets', () => {
       signingSecret,
       newSigningSecret,
       apiKey,
-      apiKey.split('_').at(-1)!, // the secret part alone
+      // The secret part alone: the last 43 chars. (Not split('_'): base64url contains "_", so a
+      // split could leave a 1–2 char fragment that appears in any log by chance — a flaky test.)
+      apiKey.slice(-43),
       signature.slice('sha256='.length),
     ]) {
       expect(output.includes(secret), `log output contains a secret (${secret.slice(0, 4)}…)`).toBe(
