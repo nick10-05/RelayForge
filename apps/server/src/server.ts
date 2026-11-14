@@ -1,7 +1,7 @@
 // Process entry point: config → pool → app → listen, plus signal handling.
 import { buildApp } from './app.ts';
 import { ConfigError, loadConfig } from './config.ts';
-import { createPool } from './db/client.ts';
+import { createDb, createPool } from './db/client.ts';
 import { createShutdown } from './shutdown.ts';
 
 function readConfig() {
@@ -18,7 +18,7 @@ function readConfig() {
 
 const config = readConfig();
 const pool = createPool(config.DATABASE_URL);
-const app = buildApp({ config, pool });
+const app = buildApp({ config, pool, db: createDb(pool) });
 
 pool.on('error', (error) => {
   // An idle client lost its connection (e.g. Neon scaled to zero). pg replaces it; just log.

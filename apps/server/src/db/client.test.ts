@@ -1,7 +1,7 @@
 import type pg from 'pg';
 import { afterAll, describe, expect, test } from 'vitest';
 import { checkDatabase, createPool } from './client.ts';
-import { TEST_DATABASE_URL, UNREACHABLE_DATABASE_URL } from '../test-support.ts';
+import { TEST_DATABASE_URL, UNREACHABLE_DATABASE_URL } from '../testing/test-support.ts';
 
 describe('checkDatabase', () => {
   const up = createPool(TEST_DATABASE_URL);

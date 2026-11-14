@@ -24,6 +24,8 @@ export default tseslint.config(
       '@typescript-eslint/no-misused-promises': 'error',
       // A switch over a union (e.g. delivery status) must handle every case.
       '@typescript-eslint/switch-exhaustiveness-check': 'error',
+      // Fastify plugins and handlers are async by contract, even when they don't await.
+      '@typescript-eslint/require-await': 'off',
     },
   },
 );

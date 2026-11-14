@@ -1,6 +1,6 @@
 **/node_modules
 **/*.test.ts
-apps/server/src/test-support.ts
+apps/server/src/testing
 .git
 .github
 .vscode

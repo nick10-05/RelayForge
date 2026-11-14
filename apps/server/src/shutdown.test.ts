@@ -1,13 +1,17 @@
 import { describe, expect, test, vi } from 'vitest';
 import { buildApp } from './app.ts';
-import { createPool } from './db/client.ts';
+import { createDb, createPool } from './db/client.ts';
 import { createShutdown } from './shutdown.ts';
-import { TEST_DATABASE_URL } from './test-support.ts';
+import { TEST_DATABASE_URL } from './testing/test-support.ts';
 
 describe('createShutdown', () => {
   test('closes the server and pool, then exits 0; repeated signals are ignored', async () => {
     const pool = createPool(TEST_DATABASE_URL);
-    const app = buildApp({ config: { LOG_LEVEL: 'silent' }, pool });
+    const app = buildApp({
+      config: { LOG_LEVEL: 'silent', NODE_ENV: 'test' },
+      pool,
+      db: createDb(pool),
+    });
     await app.listen({ port: 0, host: '127.0.0.1' });
     const exit = vi.fn();
     const shutdown = createShutdown({ app, pool, timeoutMs: 5000, exit });
@@ -22,7 +26,11 @@ describe('createShutdown', () => {
 
   test('waits for an in-flight request to finish before exiting', async () => {
     const pool = createPool(TEST_DATABASE_URL);
-    const app = buildApp({ config: { LOG_LEVEL: 'silent' }, pool });
+    const app = buildApp({
+      config: { LOG_LEVEL: 'silent', NODE_ENV: 'test' },
+      pool,
+      db: createDb(pool),
+    });
     let finished = false;
     app.get('/slow', async () => {
       await new Promise((resolve) => setTimeout(resolve, 200));
@@ -47,7 +55,11 @@ describe('createShutdown', () => {
     vi.useFakeTimers();
     try {
       const pool = createPool(TEST_DATABASE_URL);
-      const app = buildApp({ config: { LOG_LEVEL: 'silent' }, pool });
+      const app = buildApp({
+        config: { LOG_LEVEL: 'silent', NODE_ENV: 'test' },
+        pool,
+        db: createDb(pool),
+      });
       // A close that never finishes.
       app.close = (() => new Promise(() => {})) as unknown as typeof app.close;
       const exit = vi.fn();
