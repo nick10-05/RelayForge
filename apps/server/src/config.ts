@@ -12,6 +12,21 @@ const configSchema = z.object({
   DATABASE_URL: postgresUrl,
   DATABASE_DIRECT_URL: postgresUrl.optional(),
   SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
+  // Dev-only escape hatch so destinations can point at localhost receivers. Refused in production.
+  ALLOW_PRIVATE_DESTINATIONS: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
+});
+
+const configSchemaWithRules = configSchema.superRefine((config, ctx) => {
+  if (config.NODE_ENV === 'production' && config.ALLOW_PRIVATE_DESTINATIONS) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['ALLOW_PRIVATE_DESTINATIONS'],
+      message: 'must not be true in production',
+    });
+  }
 });
 
 export type Config = Omit<z.infer<typeof configSchema>, 'DATABASE_DIRECT_URL'> & {
@@ -36,7 +51,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   // Treat empty strings as unset, so `PORT=` falls back to the default instead of failing oddly.
   const cleaned = Object.fromEntries(Object.entries(env).filter(([, value]) => value !== ''));
 
-  const result = configSchema.safeParse(cleaned);
+  const result = configSchemaWithRules.safeParse(cleaned);
   if (!result.success) {
     const issues = result.error.issues.map((issue) => {
       const key = issue.path.join('.') || '(root)';

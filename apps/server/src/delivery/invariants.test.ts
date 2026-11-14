@@ -5,18 +5,15 @@ import { deliveries, deliveryAttempts } from '../db/schema.ts';
 import { startChaosReceiver } from '../testing/chaos-receiver.ts';
 import type { ChaosReceiver } from '../testing/chaos-receiver.ts';
 import { createEngineContext } from '../testing/engine-context.ts';
-import { simpleSender } from '../testing/simple-sender.ts';
 import { claimDue } from './claim.ts';
-import type { DecideFn } from './worker.ts';
+import { createDecider } from './classify.ts';
+import { createHttpSender } from './http-client.ts';
 import { createWorker } from './worker.ts';
 
-// Placeholder decision until Day 5's classification: 2xx ok, 3xx dead, else retry now.
-const decide: DecideFn = (_claim, attempt) => {
-  const s = attempt.statusCode;
-  if (s !== undefined && s >= 200 && s < 300) return { kind: 'succeeded' };
-  if (s !== undefined && s >= 300 && s < 400) return { kind: 'dead', reason: 'redirect' };
-  return { kind: 'retry', delayMs: 0 };
-};
+// Real sender and classifier. Base 0 makes backoff 0 so retries are immediately due;
+// the chaos receiver is on 127.0.0.1, hence allowPrivate.
+const simpleSender = createHttpSender({ production: false, allowPrivate: true });
+const decide = createDecider({ baseMs: 0, capMs: 3_600_000, random: Math.random });
 
 describe('engine invariants', () => {
   const ctx = createEngineContext();
@@ -165,6 +162,68 @@ describe('engine invariants', () => {
     expect(chaos.requests).toHaveLength(4);
   });
 
-  test.todo('#7: retry classification and backoff bounds match §4.5 (Day 5)');
+  test.each([
+    ['/status/404', 'non_retryable_status'],
+    ['/status/410', 'non_retryable_status'],
+    ['/redirect', 'redirect'],
+  ])('#7: %s ends dead (%s) after one attempt, never retried', async (path, reason) => {
+    const { deliveryIds } = await ctx.seed({ destinationUrl: `${chaos.url}${path}` });
+    await createWorker({ db: ctx.db, pool: ctx.pool, send: simpleSender, decide }).drain();
+    const [row] = await ctx.db.select().from(deliveries).where(eq(deliveries.id, deliveryIds[0]!));
+    expect(row).toMatchObject({ status: 'dead', deadReason: reason, attemptCount: 1 });
+    expect(chaos.requests).toHaveLength(1);
+    expect(chaos.requestsTo('/ok')).toHaveLength(0); // the redirect was not followed
+  });
+
+  test('#7: 429 with Retry-After schedules the retry at that delay', async () => {
+    const { deliveryIds } = await ctx.seed({ destinationUrl: `${chaos.url}/retry-after/120` });
+    await createWorker({ db: ctx.db, pool: ctx.pool, send: simpleSender, decide }).runCycle();
+    const [row] = await ctx.db.select().from(deliveries).where(eq(deliveries.id, deliveryIds[0]!));
+    expect(row!.status).toBe('pending');
+    const delayMs = row!.nextAttemptAt.getTime() - Date.now();
+    expect(delayMs).toBeGreaterThan(110_000);
+    expect(delayMs).toBeLessThanOrEqual(121_000);
+  });
+
+  test('#7: a hung receiver times out and is retried, recorded as TIMEOUT', async () => {
+    const { deliveryIds } = await ctx.seed({
+      destinationUrl: `${chaos.url}/hang`,
+      timeoutMs: 1000, // DB minimum
+      maxAttempts: 2,
+    });
+    await createWorker({ db: ctx.db, pool: ctx.pool, send: simpleSender, decide }).drain();
+    const [row] = await ctx.db.select().from(deliveries).where(eq(deliveries.id, deliveryIds[0]!));
+    expect(row).toMatchObject({ status: 'dead', deadReason: 'exhausted', attemptCount: 2 });
+    const attempts = await ctx.db
+      .select()
+      .from(deliveryAttempts)
+      .where(eq(deliveryAttempts.deliveryId, deliveryIds[0]!));
+    expect(attempts.map((a) => a.errorCode)).toEqual(['TIMEOUT', 'TIMEOUT']);
+  });
+
+  test('chaos run: mixed receivers all reach the right terminal state', async () => {
+    const cases = [
+      ['/ok', 'succeeded'],
+      ['/flaky/2', 'succeeded'],
+      ['/slow/50', 'succeeded'],
+      ['/status/503', 'dead'],
+      ['/reset', 'dead'],
+      ['/status/400', 'dead'],
+      ['/redirect', 'dead'],
+    ] as const;
+    const seeded = await Promise.all(
+      cases.map(([path]) =>
+        ctx.seed({ destinationUrl: `${chaos.url}${path}`, deliveries: 3, maxAttempts: 3 }),
+      ),
+    );
+    const workers = Array.from({ length: 4 }, (_, i) =>
+      createWorker({ db: ctx.db, pool: ctx.pool, send: simpleSender, decide, workerId: `c${i}` }),
+    );
+    await Promise.all(workers.map((w) => w.drain()));
+    for (const [i, [, expected]] of cases.entries()) {
+      expect(new Set(await statuses(seeded[i]!.deliveryIds))).toEqual(new Set([expected]));
+    }
+  });
+
   test.todo('#8: an invalid-signature event never produces a delivery or outbound request (Day 8)');
 });

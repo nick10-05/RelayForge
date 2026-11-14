@@ -57,6 +57,33 @@ describe('destinations API', () => {
   });
 
   test.each([
+    ['loopback literal', 'http://127.0.0.1:8080/x'],
+    ['IPv6 loopback', 'http://[::1]:8080/x'],
+    ['metadata IP', 'http://169.254.169.254:8080/latest'],
+    ['localhost', 'http://localhost:8080/x'],
+    ['private hostname', 'https://db.internal/x'],
+    ['rebinding hostname', 'https://rebind.example/x'],
+    ['unresolvable hostname', 'https://nxdomain.example/x'],
+  ])('rejects SSRF-prone destinations: %s', async (_case, url) => {
+    const { user, base } = await setup();
+    const response = await call(user, 'POST', base, { url });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: 'invalid_destination_url' });
+    expect(JSON.stringify(response.json())).not.toMatch(/10\.0\.0\.5|169\.254/);
+  });
+
+  test('PATCH re-checks the URL', async () => {
+    const { user, base } = await setup();
+    const created = (await call(user, 'POST', base, { url: 'https://example.com' })).json<{
+      destination: DestinationDto;
+    }>().destination;
+    const response = await call(user, 'PATCH', `${base}/${created.id}`, {
+      url: 'https://db.internal/x',
+    });
+    expect(response.statusCode).toBe(400);
+  });
+
+  test.each([
     ['timeout too low', { timeoutMs: 500 }],
     ['timeout too high', { timeoutMs: 20000 }],
     ['max attempts too high', { maxAttempts: 16 }],
@@ -156,6 +183,30 @@ describe('destinations API', () => {
       expect(response.statusCode).toBe(400);
     } finally {
       await prod.close();
+    }
+  });
+
+  test('ALLOW_PRIVATE_DESTINATIONS lets a local receiver be registered (dev only)', async () => {
+    const dev = createTestApp({ ALLOW_PRIVATE_DESTINATIONS: true });
+    try {
+      const user = await signUp(dev.app);
+      const ep = (
+        await dev.app.inject({
+          method: 'POST',
+          url: '/api/v1/endpoints',
+          payload: { name: 'x' },
+          headers: { cookie: user.cookie },
+        })
+      ).json<{ endpoint: { id: string } }>().endpoint.id;
+      const response = await dev.app.inject({
+        method: 'POST',
+        url: `/api/v1/endpoints/${ep}/destinations`,
+        payload: { url: 'http://localhost:4000/hook' },
+        headers: { cookie: user.cookie },
+      });
+      expect(response.statusCode).toBe(201);
+    } finally {
+      await dev.close();
     }
   });
 });

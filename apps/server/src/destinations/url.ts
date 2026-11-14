@@ -1,7 +1,29 @@
-// Static URL rules checked when a destination is created or changed (design §7.1).
-// The SSRF guard (DNS resolution + IP blocklist, at creation and at send time) is Day 5.
+// Destination URL rules (design §7.1). Static rules here; `validateDestinationUrl` adds the
+// DNS + IP blocklist check used at creation. The same checks run again at send time
+// (delivery/http-client.ts), because DNS answers can change after creation.
+import { SsrfBlockedError, resolveAllowed } from '../delivery/ssrf.ts';
+import type { ResolveFn } from '../delivery/ssrf.ts';
 
 export type UrlCheck = { ok: true; url: string } | { ok: false; reason: string };
+
+export async function validateDestinationUrl(
+  raw: string,
+  opts: { production: boolean; allowPrivate: boolean; resolve?: ResolveFn },
+): Promise<UrlCheck> {
+  const checked = checkDestinationUrl(raw, opts);
+  if (!checked.ok) return checked;
+  const hostname = new URL(checked.url).hostname.replace(/^\[(.*)\]$/, '$1');
+  try {
+    await resolveAllowed(hostname, {
+      allowPrivate: opts.allowPrivate,
+      ...(opts.resolve && { resolve: opts.resolve }),
+    });
+    return checked;
+  } catch (error) {
+    if (error instanceof SsrfBlockedError) return { ok: false, reason: error.message };
+    return { ok: false, reason: 'hostname does not resolve' };
+  }
+}
 
 export function checkDestinationUrl(raw: string, opts: { production: boolean }): UrlCheck {
   let url: URL;

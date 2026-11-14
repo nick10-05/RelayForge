@@ -35,6 +35,7 @@ export type SeedOptions = {
   paused?: boolean;
   enabled?: boolean;
   nextAttemptAt?: Date;
+  timeoutMs?: number;
 };
 
 /** One user → endpoint → destination, and `deliveries` events each with a pending delivery. */
@@ -59,7 +60,7 @@ async function seed(db: Db, opts: SeedOptions = {}) {
       url: opts.destinationUrl ?? 'http://127.0.0.1:9/unused',
       enabled: opts.enabled ?? true,
       maxAttempts: opts.maxAttempts ?? 10,
-      timeoutMs: 2000,
+      timeoutMs: opts.timeoutMs ?? 2000,
     })
     .returning();
 

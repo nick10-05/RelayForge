@@ -5,7 +5,8 @@ import { currentUser, requireUser } from '../auth/guard.ts';
 import type { Db } from '../db/client.ts';
 import { destinations, endpoints } from '../db/schema.ts';
 import { NOT_FOUND } from '../http/errors.ts';
-import { checkDestinationUrl } from './url.ts';
+import type { ResolveFn } from '../delivery/ssrf.ts';
+import { validateDestinationUrl } from './url.ts';
 
 const url = z.string().trim().min(1).max(2048);
 const timeoutMs = z.number().int().min(1000).max(15000);
@@ -31,10 +32,19 @@ const invalidUrl = (reason: string) => ({
   message: `Destination URL rejected: ${reason}`,
 });
 
-export const destinationRoutes: FastifyPluginAsyncZod<{ db: Db; production: boolean }> = async (
+export type DestinationRouteOptions = {
+  db: Db;
+  production: boolean;
+  allowPrivate: boolean;
+  resolve?: ResolveFn;
+};
+
+export const destinationRoutes: FastifyPluginAsyncZod<DestinationRouteOptions> = async (
   app,
-  { db, production },
+  { db, production, allowPrivate, resolve },
 ) => {
+  const validate = (raw: string) =>
+    validateDestinationUrl(raw, { production, allowPrivate, ...(resolve && { resolve }) });
   app.addHook('preHandler', requireUser(db));
 
   /** Tenant check: the endpoint must belong to the current user, else 404. */
@@ -74,7 +84,7 @@ export const destinationRoutes: FastifyPluginAsyncZod<{ db: Db; production: bool
       if (!(await ownsEndpoint(currentUser(request).id, endpointId))) {
         return reply.code(404).send(NOT_FOUND);
       }
-      const checked = checkDestinationUrl(request.body.url, { production });
+      const checked = await validate(request.body.url);
       if (!checked.ok) return reply.code(400).send(invalidUrl(checked.reason));
 
       const [row] = await db
@@ -134,7 +144,7 @@ export const destinationRoutes: FastifyPluginAsyncZod<{ db: Db; production: bool
       const body = request.body;
       let newUrl: string | undefined;
       if (body.url !== undefined) {
-        const checked = checkDestinationUrl(body.url, { production });
+        const checked = await validate(body.url);
         if (!checked.ok) return reply.code(400).send(invalidUrl(checked.reason));
         newUrl = checked.url;
       }

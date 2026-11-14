@@ -7,6 +7,7 @@ import { buildApp } from '../app.ts';
 import type { AppDeps } from '../app.ts';
 import { SESSION_COOKIE } from '../auth/sessions.ts';
 import { createDb, createPool } from '../db/client.ts';
+import { fakeResolve } from './fake-dns.ts';
 import { TEST_DATABASE_URL } from './test-support.ts';
 
 export const TEST_PASSWORD = 'correct horse battery staple';
@@ -20,6 +21,7 @@ export function createTestApp(config: Partial<AppDeps['config']> = {}) {
     pool,
     db,
     wakeWorker,
+    resolve: fakeResolve,
   });
   return {
     app,

@@ -24,6 +24,7 @@ describe('loadConfig', () => {
       DATABASE_URL: DB,
       DATABASE_DIRECT_URL: DB,
       SHUTDOWN_TIMEOUT_MS: 10000,
+      ALLOW_PRIVATE_DESTINATIONS: false,
     });
   });
 
@@ -69,6 +70,7 @@ describe('loadConfig', () => {
     ['NODE_ENV', 'staging'],
     ['LOG_LEVEL', 'verbose'],
     ['SHUTDOWN_TIMEOUT_MS', '10'],
+    ['ALLOW_PRIVATE_DESTINATIONS', 'yes'],
   ])('rejects invalid %s=%s', (key, value) => {
     const error = errorOf(() => loadConfig({ DATABASE_URL: DB, [key]: value }));
     expect(error.issues.some((i) => i.startsWith(`${key}:`))).toBe(true);
@@ -85,5 +87,16 @@ describe('loadConfig', () => {
     );
     expect(error.message).not.toContain('s3cret-value');
     expect(error.message).not.toContain('abc');
+  });
+
+  test('ALLOW_PRIVATE_DESTINATIONS: parsed as a boolean, refused in production', () => {
+    expect(
+      loadConfig({ DATABASE_URL: DB, ALLOW_PRIVATE_DESTINATIONS: 'true' })
+        .ALLOW_PRIVATE_DESTINATIONS,
+    ).toBe(true);
+    const error = errorOf(() =>
+      loadConfig({ DATABASE_URL: DB, NODE_ENV: 'production', ALLOW_PRIVATE_DESTINATIONS: 'true' }),
+    );
+    expect(error.issues).toEqual(['ALLOW_PRIVATE_DESTINATIONS: must not be true in production']);
   });
 });

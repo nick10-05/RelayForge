@@ -6,6 +6,7 @@
 //   /slow/:ms              200 after a delay
 //   /hang                  never answers (connection held until close())
 //   /reset                 destroys the TCP connection without a response
+//   /big/:bytes            200 with a body of that many bytes
 //   /redirect              302 → /ok (RelayForge must not follow it)
 //   /flaky/:n              500 for the first n requests per delivery, then 200
 //                          (keyed by X-RelayForge-Delivery-Id, else the path)
@@ -72,6 +73,12 @@ export async function startChaosReceiver(): Promise<ChaosReceiver> {
       case 'reset':
         res.socket?.destroy();
         return;
+      case 'big': {
+        const body = Buffer.alloc(Number(arg) || 10_000, 'x');
+        res.writeHead(200, { 'content-type': 'text/plain', 'content-length': body.length });
+        res.end(body);
+        return;
+      }
       case 'redirect':
         return send(302, { location: '/ok' });
       case 'flaky': {

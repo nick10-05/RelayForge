@@ -12,6 +12,7 @@ import { eventRoutes } from './events/routes.ts';
 import { registerErrorHandling } from './http/errors.ts';
 import { ingestRoutes } from './ingest/routes.ts';
 import type { Config } from './config.ts';
+import type { ResolveFn } from './delivery/ssrf.ts';
 
 /** Log paths that must never be written in clear text. */
 export const REDACT_PATHS = [
@@ -27,14 +28,23 @@ export const REDACT_PATHS = [
 ];
 
 export type AppDeps = {
-  config: Pick<Config, 'LOG_LEVEL' | 'NODE_ENV'>;
+  config: Pick<Config, 'LOG_LEVEL' | 'NODE_ENV'> &
+    Partial<Pick<Config, 'ALLOW_PRIVATE_DESTINATIONS'>>;
   pool: pg.Pool;
   db: Db;
   /** Called after an ingested event with deliveries commits. The Day 6 worker plugs in here. */
   wakeWorker?: () => void;
+  /** DNS resolver for destination validation (injectable for tests). */
+  resolve?: ResolveFn;
 };
 
-export function buildApp({ config, pool, db, wakeWorker = () => {} }: AppDeps): FastifyInstance {
+export function buildApp({
+  config,
+  pool,
+  db,
+  wakeWorker = () => {},
+  resolve,
+}: AppDeps): FastifyInstance {
   const app = Fastify({
     logger: {
       level: config.LOG_LEVEL,
@@ -78,6 +88,8 @@ export function buildApp({ config, pool, db, wakeWorker = () => {} }: AppDeps): 
     prefix: '/api/v1/endpoints/:endpointId/destinations',
     db,
     production,
+    allowPrivate: config.ALLOW_PRIVATE_DESTINATIONS ?? false,
+    ...(resolve && { resolve }),
   });
   void app.register(eventRoutes, { prefix: '/api/v1', db });
   void app.register(ingestRoutes, { prefix: '/in', db, wakeWorker });
