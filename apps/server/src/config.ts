@@ -12,6 +12,8 @@ const configSchema = z.object({
   DATABASE_URL: postgresUrl,
   DATABASE_DIRECT_URL: postgresUrl.optional(),
   SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
+  // Max deliveries sent at the same time by this process's worker.
+  WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(64).default(8),
   // Dev-only escape hatch so destinations can point at localhost receivers. Refused in production.
   ALLOW_PRIVATE_DESTINATIONS: z
     .enum(['true', 'false'])

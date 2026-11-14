@@ -6,6 +6,9 @@ import type pg from 'pg';
 import { authRoutes } from './auth/routes.ts';
 import { checkDatabase } from './db/client.ts';
 import type { Db } from './db/client.ts';
+import { plaintextBox } from './crypto/secret-box.ts';
+import type { SecretBox } from './crypto/secret-box.ts';
+import { redeliveryRoutes } from './delivery/routes.ts';
 import { destinationRoutes } from './destinations/routes.ts';
 import { endpointRoutes } from './endpoints/routes.ts';
 import { eventRoutes } from './events/routes.ts';
@@ -32,8 +35,10 @@ export type AppDeps = {
     Partial<Pick<Config, 'ALLOW_PRIVATE_DESTINATIONS'>>;
   pool: pg.Pool;
   db: Db;
-  /** Called after an ingested event with deliveries commits. The Day 6 worker plugs in here. */
+  /** Wakes the delivery worker (new deliveries, redelivery, endpoint resumed, destination re-enabled). */
   wakeWorker?: () => void;
+  /** Seals stored secrets (AES-GCM from Day 8). */
+  secretBox?: SecretBox;
   /** DNS resolver for destination validation (injectable for tests). */
   resolve?: ResolveFn;
 };
@@ -44,6 +49,7 @@ export function buildApp({
   db,
   wakeWorker = () => {},
   resolve,
+  secretBox = plaintextBox,
 }: AppDeps): FastifyInstance {
   const app = Fastify({
     logger: {
@@ -83,15 +89,18 @@ export function buildApp({
 
   const production = config.NODE_ENV === 'production';
   void app.register(authRoutes, { prefix: '/api/v1/auth', db });
-  void app.register(endpointRoutes, { prefix: '/api/v1/endpoints', db });
+  void app.register(endpointRoutes, { prefix: '/api/v1/endpoints', db, wakeWorker });
   void app.register(destinationRoutes, {
     prefix: '/api/v1/endpoints/:endpointId/destinations',
     db,
     production,
     allowPrivate: config.ALLOW_PRIVATE_DESTINATIONS ?? false,
     ...(resolve && { resolve }),
+    secretBox,
+    wakeWorker,
   });
   void app.register(eventRoutes, { prefix: '/api/v1', db });
+  void app.register(redeliveryRoutes, { prefix: '/api/v1', db, wakeWorker });
   void app.register(ingestRoutes, { prefix: '/in', db, wakeWorker });
 
   return app;

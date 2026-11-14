@@ -4,7 +4,10 @@ import http from 'node:http';
 import https from 'node:https';
 import { isIP } from 'node:net';
 import { performance } from 'node:perf_hooks';
+import { plaintextBox } from '../crypto/secret-box.ts';
+import type { SecretBox } from '../crypto/secret-box.ts';
 import { checkDestinationUrl } from '../destinations/url.ts';
+import { signatureHeaders } from './signing.ts';
 import { createGuardedLookup, isBlockedAddress } from './ssrf.ts';
 import type { ResolveFn } from './ssrf.ts';
 import type { AttemptResult, ClaimedDelivery } from './types.ts';
@@ -29,7 +32,10 @@ const STRIPPED = new Set([
   'expect',
 ]);
 
-export function buildForwardHeaders(claim: ClaimedDelivery): Record<string, string | string[]> {
+export function buildForwardHeaders(
+  claim: ClaimedDelivery,
+  signing?: { secrets: string[]; timestamp: number },
+): Record<string, string | string[]> {
   const out: Record<string, string | string[]> = {};
   for (const [name, value] of Object.entries(claim.headers)) {
     const lower = name.toLowerCase();
@@ -42,6 +48,17 @@ export function buildForwardHeaders(claim: ClaimedDelivery): Record<string, stri
   out['x-relayforge-delivery-id'] = claim.id;
   out['x-relayforge-attempt'] = String(claim.attemptCount);
   if (claim.trigger === 'manual') out['x-relayforge-replay'] = 'true';
+  if (signing && signing.secrets.length > 0) {
+    Object.assign(
+      out,
+      signatureHeaders({
+        id: claim.eventId,
+        timestamp: signing.timestamp,
+        body: claim.body,
+        secrets: signing.secrets,
+      }),
+    );
+  }
   return out;
 }
 
@@ -50,7 +67,18 @@ export type HttpSenderOptions = {
   allowPrivate: boolean;
   resolve?: ResolveFn;
   connectTimeoutMs?: number;
+  /** Opens sealed signing secrets (AES-GCM from Day 8). */
+  secretBox?: SecretBox;
+  /** Unix-ms clock for the signature timestamp (injectable for tests). */
+  now?: () => number;
 };
+
+/** Signing secrets in clear for one attempt. Throws if a sealed value can't be opened. */
+export function openSigningSecrets(claim: ClaimedDelivery, box: SecretBox): string[] {
+  return claim.signingSecrets.map((s) =>
+    box.open(s.sealed, { table: 'destinations', column: s.column, rowId: claim.destinationId }),
+  );
+}
 
 export function createHttpSender(options: HttpSenderOptions): SendFn {
   const lookup = createGuardedLookup({
@@ -58,6 +86,8 @@ export function createHttpSender(options: HttpSenderOptions): SendFn {
     ...(options.resolve && { resolve: options.resolve }),
   });
   const connectTimeoutMs = options.connectTimeoutMs ?? CONNECT_TIMEOUT_MS;
+  const secretBox = options.secretBox ?? plaintextBox;
+  const now = options.now ?? Date.now;
 
   return (claim) =>
     new Promise<AttemptResult>((resolve) => {
@@ -90,6 +120,20 @@ export function createHttpSender(options: HttpSenderOptions): SendFn {
         return;
       }
 
+      let headers: Record<string, string | string[]>;
+      try {
+        // Timestamp per attempt: a retry hours later still passes the receiver's tolerance check.
+        const timestamp = Math.floor(now() / 1000);
+        headers = buildForwardHeaders(claim, {
+          secrets: openSigningSecrets(claim, secretBox),
+          timestamp,
+        });
+      } catch {
+        // Never send unsigned when a secret is configured; never echo the secret in the error.
+        finish({ errorCode: 'SIGNING_FAILED', errorMessage: 'signing secret could not be opened' });
+        return;
+      }
+
       const transport = url.protocol === 'https:' ? https : http;
       const request = transport.request({
         protocol: url.protocol,
@@ -97,7 +141,7 @@ export function createHttpSender(options: HttpSenderOptions): SendFn {
         port: url.port === '' ? undefined : Number(url.port),
         path: `${url.pathname}${url.search}`,
         method: claim.method,
-        headers: buildForwardHeaders(claim),
+        headers,
         lookup,
         agent: false, // fresh, vetted connection per attempt; no pooled sockets
         maxHeaderSize: 16 * 1024,

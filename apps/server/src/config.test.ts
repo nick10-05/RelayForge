@@ -25,6 +25,7 @@ describe('loadConfig', () => {
       DATABASE_DIRECT_URL: DB,
       SHUTDOWN_TIMEOUT_MS: 10000,
       ALLOW_PRIVATE_DESTINATIONS: false,
+      WORKER_CONCURRENCY: 8,
     });
   });
 

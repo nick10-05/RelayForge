@@ -43,7 +43,10 @@ WITH due AS (
   RETURNING d.id, d.event_id, d.destination_id, d.attempt_count, d.max_attempts,
             d.trigger, d.lease_owner, d.next_attempt_at AS lease_expires_at
 )
-SELECT c.*, ds.url, ds.timeout_ms, ev.endpoint_id, ev.method, ev.headers, ev.body, ev.content_type
+SELECT c.*, ds.url, ds.timeout_ms, ev.endpoint_id, ev.method, ev.headers, ev.body, ev.content_type,
+       ds.signing_secret_enc,
+       CASE WHEN ds.prev_secret_expires_at > now() THEN ds.prev_signing_secret_enc END
+         AS prev_signing_secret_enc
 FROM claimed c
 JOIN destinations ds ON ds.id = c.destination_id
 JOIN events ev       ON ev.id = c.event_id
@@ -83,6 +86,8 @@ type ClaimRow = {
   headers: Record<string, string | string[]>;
   body: Buffer;
   content_type: string | null;
+  signing_secret_enc: string | null;
+  prev_signing_secret_enc: string | null;
 };
 
 export async function reapExhausted(pool: pg.Pool, limit = 100): Promise<number> {
@@ -109,5 +114,13 @@ export async function claimDue(pool: pg.Pool, options: ClaimOptions): Promise<Cl
     headers: r.headers,
     body: r.body,
     contentType: r.content_type,
+    signingSecrets: [
+      ...(r.signing_secret_enc
+        ? [{ column: 'signing_secret_enc' as const, sealed: r.signing_secret_enc }]
+        : []),
+      ...(r.prev_signing_secret_enc
+        ? [{ column: 'prev_signing_secret_enc' as const, sealed: r.prev_signing_secret_enc }]
+        : []),
+    ],
   }));
 }

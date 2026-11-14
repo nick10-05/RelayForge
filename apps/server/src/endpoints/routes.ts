@@ -44,7 +44,10 @@ const toDto = (e: EndpointRow) => ({
   createdAt: e.createdAt,
 });
 
-export const endpointRoutes: FastifyPluginAsyncZod<{ db: Db }> = async (app, { db }) => {
+export const endpointRoutes: FastifyPluginAsyncZod<{ db: Db; wakeWorker: () => void }> = async (
+  app,
+  { db, wakeWorker },
+) => {
   app.addHook('preHandler', requireUser(db));
 
   const findOwned = async (userId: string, id: string) => {
@@ -142,7 +145,8 @@ export const endpointRoutes: FastifyPluginAsyncZod<{ db: Db }> = async (app, { d
         .where(and(eq(endpoints.id, existing.id), eq(endpoints.userId, user.id)))
         .returning();
       if (!row) return reply.code(404).send(NOT_FOUND);
-      // Day 6: resuming a paused endpoint will wake the delivery worker here.
+      // Held deliveries become claimable again; the worker may be sleeping indefinitely.
+      if (existing.paused && !row.paused) wakeWorker();
       return { endpoint: toDto(row) };
     },
   );

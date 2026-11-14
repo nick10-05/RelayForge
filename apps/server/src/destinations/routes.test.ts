@@ -40,7 +40,11 @@ describe('destinations API', () => {
       timeoutMs: 10000,
       maxAttempts: 10,
     });
-    expect(response.body).not.toContain('Secret');
+    // The secret is returned once, beside the DTO; the DTO itself never carries secret fields.
+    expect(JSON.stringify(response.json<{ destination: object }>().destination)).not.toContain(
+      'ecret',
+    );
+    expect(response.json<{ signingSecret: string }>().signingSecret).toMatch(/^whsec_/);
   });
 
   test.each([

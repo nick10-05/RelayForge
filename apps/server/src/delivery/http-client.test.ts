@@ -1,12 +1,17 @@
 // Outbound HTTP against the local chaos receiver (no network beyond 127.0.0.1).
 import { createServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
+import { Webhook } from 'standardwebhooks';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { startChaosReceiver } from '../testing/chaos-receiver.ts';
 import type { ChaosReceiver } from '../testing/chaos-receiver.ts';
 import { fakeResolve } from '../testing/fake-dns.ts';
 import { MAX_RESPONSE_BYTES, buildForwardHeaders, createHttpSender } from './http-client.ts';
+import { plaintextBox } from '../crypto/secret-box.ts';
+import { generateSigningSecret } from './signing.ts';
 import type { ClaimedDelivery } from './types.ts';
+
+const REF = { table: 'destinations', column: 'signing_secret_enc', rowId: 'dst-1' };
 
 function makeClaim(url: string, extra: Partial<ClaimedDelivery> = {}): ClaimedDelivery {
   return {
@@ -25,6 +30,7 @@ function makeClaim(url: string, extra: Partial<ClaimedDelivery> = {}): ClaimedDe
     headers: { 'content-type': 'application/json' },
     body: Buffer.from('{"hello":"world"}'),
     contentType: 'application/json',
+    signingSecrets: [],
     ...extra,
   };
 }
@@ -160,5 +166,76 @@ describe('createHttpSender', () => {
   test('unresolvable host → ENOTFOUND (retryable)', async () => {
     const result = await strict(makeClaim(`http://nxdomain.example:${port}/ok`));
     expect(result.errorCode).toBe('ENOTFOUND');
+  });
+});
+
+describe('signed deliveries', () => {
+  let chaos: ChaosReceiver;
+  beforeAll(async () => {
+    chaos = await startChaosReceiver();
+  });
+  afterAll(() => chaos.close());
+
+  test('signs with current + previous secret; the reference library verifies', async () => {
+    const current = generateSigningSecret();
+    const previous = generateSigningSecret();
+    const send = createHttpSender({ production: false, allowPrivate: true });
+    const result = await send(
+      makeClaim(`${chaos.url}/ok`, {
+        signingSecrets: [
+          { column: 'signing_secret_enc', sealed: plaintextBox.seal(current, REF) },
+          { column: 'prev_signing_secret_enc', sealed: plaintextBox.seal(previous, REF) },
+        ],
+      }),
+    );
+    expect(result.statusCode).toBe(200);
+    const req = chaos.requests.at(-1)!;
+    const signature = req.headers['x-relayforge-signature'] as string;
+    expect(signature.split(' ')).toHaveLength(2);
+    for (const secret of [current, previous]) {
+      expect(() =>
+        new Webhook(secret).verify(req.body, {
+          'webhook-id': req.headers['x-relayforge-id'] as string,
+          'webhook-timestamp': req.headers['x-relayforge-timestamp'] as string,
+          'webhook-signature': signature,
+        }),
+      ).not.toThrow();
+    }
+  });
+
+  test('the timestamp is taken per attempt', async () => {
+    let clock = 1_800_000_000_000;
+    const send = createHttpSender({ production: false, allowPrivate: true, now: () => clock });
+    const claim = makeClaim(`${chaos.url}/ok`, {
+      signingSecrets: [
+        { column: 'signing_secret_enc', sealed: plaintextBox.seal(generateSigningSecret(), REF) },
+      ],
+    });
+    await send(claim);
+    clock += 3_600_000;
+    await send({ ...claim, attemptCount: 3 });
+    const stamps = chaos.requests.slice(-2).map((r) => r.headers['x-relayforge-timestamp']);
+    expect(stamps).toEqual(['1800000000', '1800003600']);
+  });
+
+  test('no secret → no signature headers', async () => {
+    const send = createHttpSender({ production: false, allowPrivate: true });
+    await send(makeClaim(`${chaos.url}/ok`));
+    const req = chaos.requests.at(-1)!;
+    expect(req.headers['x-relayforge-signature']).toBeUndefined();
+    expect(req.headers['x-relayforge-timestamp']).toBeUndefined();
+  });
+
+  test('an unopenable secret is never sent unsigned and never echoed', async () => {
+    const send = createHttpSender({ production: false, allowPrivate: true });
+    const before = chaos.requests.length;
+    const result = await send(
+      makeClaim(`${chaos.url}/ok`, {
+        signingSecrets: [{ column: 'signing_secret_enc', sealed: 'garbage-whsec_abc' }],
+      }),
+    );
+    expect(result.errorCode).toBe('SIGNING_FAILED');
+    expect(result.errorMessage).not.toContain('garbage');
+    expect(chaos.requests).toHaveLength(before);
   });
 });

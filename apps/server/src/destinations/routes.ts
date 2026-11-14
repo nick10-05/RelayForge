@@ -2,6 +2,9 @@ import { and, asc, eq } from 'drizzle-orm';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { currentUser, requireUser } from '../auth/guard.ts';
+import type { SecretBox } from '../crypto/secret-box.ts';
+import { ROTATION_WINDOW_MS, generateSigningSecret } from '../delivery/signing.ts';
+import { uuidv7 } from '../lib/uuidv7.ts';
 import type { Db } from '../db/client.ts';
 import { destinations, endpoints } from '../db/schema.ts';
 import { NOT_FOUND } from '../http/errors.ts';
@@ -16,7 +19,7 @@ const endpointParams = z.object({ endpointId: z.uuid() });
 const destinationParams = z.object({ endpointId: z.uuid(), id: z.uuid() });
 
 type DestinationRow = typeof destinations.$inferSelect;
-// Secrets are never returned here (signing secrets get their own reveal flow on Day 6).
+// Secrets are never part of the DTO: they are returned once on create/rotate, and via /secret.
 const toDto = (d: DestinationRow) => ({
   id: d.id,
   endpointId: d.endpointId,
@@ -37,12 +40,19 @@ export type DestinationRouteOptions = {
   production: boolean;
   allowPrivate: boolean;
   resolve?: ResolveFn;
+  secretBox: SecretBox;
+  wakeWorker: () => void;
 };
 
 export const destinationRoutes: FastifyPluginAsyncZod<DestinationRouteOptions> = async (
   app,
-  { db, production, allowPrivate, resolve },
+  { db, production, allowPrivate, resolve, secretBox, wakeWorker },
 ) => {
+  const ref = (rowId: string, column: 'signing_secret_enc' | 'prev_signing_secret_enc') => ({
+    table: 'destinations',
+    column,
+    rowId,
+  });
   const validate = (raw: string) =>
     validateDestinationUrl(raw, { production, allowPrivate, ...(resolve && { resolve }) });
   app.addHook('preHandler', requireUser(db));
@@ -87,9 +97,14 @@ export const destinationRoutes: FastifyPluginAsyncZod<DestinationRouteOptions> =
       const checked = await validate(request.body.url);
       if (!checked.ok) return reply.code(400).send(invalidUrl(checked.reason));
 
+      // The id is generated first because it is part of the secret's AAD.
+      const id = uuidv7();
+      const signingSecret = generateSigningSecret();
       const [row] = await db
         .insert(destinations)
         .values({
+          id,
+          signingSecretEnc: secretBox.seal(signingSecret, ref(id, 'signing_secret_enc')),
           endpointId,
           url: checked.url,
           timeoutMs: request.body.timeoutMs,
@@ -97,7 +112,7 @@ export const destinationRoutes: FastifyPluginAsyncZod<DestinationRouteOptions> =
         })
         .returning();
       if (!row) throw new Error('insert returned no row');
-      return reply.code(201).send({ destination: toDto(row) });
+      return reply.code(201).send({ destination: toDto(row), signingSecret });
     },
   );
 
@@ -160,8 +175,62 @@ export const destinationRoutes: FastifyPluginAsyncZod<DestinationRouteOptions> =
         .where(eq(destinations.id, existing.id))
         .returning();
       if (!row) return reply.code(404).send(NOT_FOUND);
-      // Day 6: re-enabling a destination will wake the delivery worker here.
+      // Held deliveries become claimable again; the worker may be sleeping indefinitely.
+      if (!existing.enabled && row.enabled) wakeWorker();
       return { destination: toDto(row) };
+    },
+  );
+
+  /** Current signing secret (and the previous one while it still signs). */
+  app.get('/:id/secret', { schema: { params: destinationParams } }, async (request, reply) => {
+    const { endpointId, id } = request.params;
+    const row = await findOwned(currentUser(request).id, endpointId, id);
+    if (!row) return reply.code(404).send(NOT_FOUND);
+    const previousActive =
+      row.prevSigningSecretEnc !== null &&
+      row.prevSecretExpiresAt !== null &&
+      row.prevSecretExpiresAt.getTime() > Date.now();
+    return {
+      signingSecret: row.signingSecretEnc
+        ? secretBox.open(row.signingSecretEnc, ref(row.id, 'signing_secret_enc'))
+        : null,
+      previousSigningSecret: previousActive
+        ? secretBox.open(row.prevSigningSecretEnc!, ref(row.id, 'prev_signing_secret_enc'))
+        : null,
+      previousExpiresAt: previousActive ? row.prevSecretExpiresAt : null,
+    };
+  });
+
+  /**
+   * New signing secret. The old one keeps signing (second signature in the header) for 24 h
+   * so receivers can switch without rejecting messages. Rotating again inside the window
+   * drops the oldest secret.
+   */
+  app.post(
+    '/:id/rotate-secret',
+    { schema: { params: destinationParams } },
+    async (request, reply) => {
+      const { endpointId, id } = request.params;
+      const row = await findOwned(currentUser(request).id, endpointId, id);
+      if (!row) return reply.code(404).send(NOT_FOUND);
+
+      const signingSecret = generateSigningSecret();
+      const previous = row.signingSecretEnc
+        ? secretBox.seal(
+            secretBox.open(row.signingSecretEnc, ref(row.id, 'signing_secret_enc')),
+            ref(row.id, 'prev_signing_secret_enc'), // re-sealed: the AAD names the column
+          )
+        : null;
+      const previousExpiresAt = previous ? new Date(Date.now() + ROTATION_WINDOW_MS) : null;
+      await db
+        .update(destinations)
+        .set({
+          signingSecretEnc: secretBox.seal(signingSecret, ref(row.id, 'signing_secret_enc')),
+          prevSigningSecretEnc: previous,
+          prevSecretExpiresAt: previousExpiresAt,
+        })
+        .where(eq(destinations.id, row.id));
+      return { signingSecret, previousExpiresAt };
     },
   );
 

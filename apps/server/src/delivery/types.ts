@@ -18,6 +18,13 @@ export type ClaimedDelivery = {
   headers: Record<string, string | string[]>;
   body: Buffer;
   contentType: string | null;
+  /** Sealed signing secrets: current first, then the previous one inside the rotation window. */
+  signingSecrets: SealedSigningSecret[];
+};
+
+export type SealedSigningSecret = {
+  column: 'signing_secret_enc' | 'prev_signing_secret_enc';
+  sealed: string;
 };
 
 /** What happened on the wire for one attempt. Always logged to delivery_attempts. */

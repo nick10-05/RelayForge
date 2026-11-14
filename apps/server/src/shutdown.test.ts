@@ -73,4 +73,27 @@ describe('createShutdown', () => {
       vi.useRealTimers();
     }
   });
+
+  test('stops the delivery worker (shorter budget) before closing the pool', async () => {
+    const pool = createPool(TEST_DATABASE_URL);
+    const app = buildApp({
+      config: { LOG_LEVEL: 'silent', NODE_ENV: 'test' },
+      pool,
+      db: createDb(pool),
+    });
+    const order: string[] = [];
+    const worker = {
+      stop: vi.fn(async (ms: number) => {
+        expect(ms).toBeGreaterThan(0);
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        order.push(pool.ended ? 'worker-after-pool' : 'worker-stopped');
+      }),
+    };
+    const exit = vi.fn();
+    await createShutdown({ app, pool, worker, timeoutMs: 5000, exit })('SIGTERM');
+    expect(worker.stop).toHaveBeenCalledWith(4000);
+    expect(order).toEqual(['worker-stopped']);
+    expect(pool.ended).toBe(true);
+    expect(exit).toHaveBeenCalledWith(0);
+  });
 });
