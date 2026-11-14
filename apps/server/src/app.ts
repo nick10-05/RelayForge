@@ -8,7 +8,9 @@ import { checkDatabase } from './db/client.ts';
 import type { Db } from './db/client.ts';
 import { destinationRoutes } from './destinations/routes.ts';
 import { endpointRoutes } from './endpoints/routes.ts';
+import { eventRoutes } from './events/routes.ts';
 import { registerErrorHandling } from './http/errors.ts';
+import { ingestRoutes } from './ingest/routes.ts';
 import type { Config } from './config.ts';
 
 /** Log paths that must never be written in clear text. */
@@ -28,9 +30,11 @@ export type AppDeps = {
   config: Pick<Config, 'LOG_LEVEL' | 'NODE_ENV'>;
   pool: pg.Pool;
   db: Db;
+  /** Called after an ingested event with deliveries commits. The Day 6 worker plugs in here. */
+  wakeWorker?: () => void;
 };
 
-export function buildApp({ config, pool, db }: AppDeps): FastifyInstance {
+export function buildApp({ config, pool, db, wakeWorker = () => {} }: AppDeps): FastifyInstance {
   const app = Fastify({
     logger: {
       level: config.LOG_LEVEL,
@@ -75,6 +79,8 @@ export function buildApp({ config, pool, db }: AppDeps): FastifyInstance {
     db,
     production,
   });
+  void app.register(eventRoutes, { prefix: '/api/v1', db });
+  void app.register(ingestRoutes, { prefix: '/in', db, wakeWorker });
 
   return app;
 }

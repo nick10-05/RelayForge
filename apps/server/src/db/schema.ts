@@ -181,7 +181,10 @@ export const events = pgTable(
       .notNull()
       .default('not_checked'),
     signatureFailureReason: text('signature_failure_reason'),
-    receivedAt: tstz('received_at').notNull().defaultNow(),
+    // Millisecond precision so keyset cursors (JS Date) compare exactly.
+    receivedAt: timestamp('received_at', { withTimezone: true, mode: 'date', precision: 3 })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [
     uniqueIndex('events_endpoint_dedupe_key_uq')
