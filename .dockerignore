@@ -1,0 +1,13 @@
+**/node_modules
+**/*.test.ts
+apps/server/src/test-support.ts
+.git
+.github
+.vscode
+.env
+.env.*
+coverage
+dist
+docs
+docker
+*.md
