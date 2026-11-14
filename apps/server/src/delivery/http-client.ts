@@ -4,7 +4,7 @@ import http from 'node:http';
 import https from 'node:https';
 import { isIP } from 'node:net';
 import { performance } from 'node:perf_hooks';
-import { plaintextBox } from '../crypto/secret-box.ts';
+import { unconfiguredBox } from '../crypto/secret-box.ts';
 import type { SecretBox } from '../crypto/secret-box.ts';
 import { checkDestinationUrl } from '../destinations/url.ts';
 import { signatureHeaders } from './signing.ts';
@@ -67,7 +67,7 @@ export type HttpSenderOptions = {
   allowPrivate: boolean;
   resolve?: ResolveFn;
   connectTimeoutMs?: number;
-  /** Opens sealed signing secrets (AES-GCM from Day 8). */
+  /** Opens sealed signing secrets. Without one, a signed destination fails SIGNING_FAILED. */
   secretBox?: SecretBox;
   /** Unix-ms clock for the signature timestamp (injectable for tests). */
   now?: () => number;
@@ -86,7 +86,7 @@ export function createHttpSender(options: HttpSenderOptions): SendFn {
     ...(options.resolve && { resolve: options.resolve }),
   });
   const connectTimeoutMs = options.connectTimeoutMs ?? CONNECT_TIMEOUT_MS;
-  const secretBox = options.secretBox ?? plaintextBox;
+  const secretBox = options.secretBox ?? unconfiguredBox;
   const now = options.now ?? Date.now;
 
   return (claim) =>

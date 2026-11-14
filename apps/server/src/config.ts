@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { KeyringError, parseKeyring } from './crypto/secret-box.ts';
 
 const postgresUrl = z
   .string()
@@ -19,6 +20,10 @@ const configSchema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((value) => value === 'true'),
+  // Secret encryption keyring (design §7.4): "<keyId>:<base64 32 bytes>[,...]" + active id.
+  // Required outside tests; tests build their own keyring.
+  ENCRYPTION_KEYS: z.string().optional(),
+  ENCRYPTION_ACTIVE_KEY_ID: z.string().optional(),
 });
 
 const configSchemaWithRules = configSchema.superRefine((config, ctx) => {
@@ -28,6 +33,24 @@ const configSchemaWithRules = configSchema.superRefine((config, ctx) => {
       path: ['ALLOW_PRIVATE_DESTINATIONS'],
       message: 'must not be true in production',
     });
+  }
+  const { ENCRYPTION_KEYS: keys, ENCRYPTION_ACTIVE_KEY_ID: active } = config;
+  if (keys === undefined || active === undefined) {
+    if (config.NODE_ENV !== 'test') {
+      for (const name of ['ENCRYPTION_KEYS', 'ENCRYPTION_ACTIVE_KEY_ID'] as const) {
+        if (config[name] === undefined) {
+          ctx.addIssue({ code: 'custom', path: [name], message: 'is required' });
+        }
+      }
+    }
+    return;
+  }
+  try {
+    parseKeyring(keys, active);
+  } catch (error) {
+    // KeyringError messages name ids and positions only, never key material.
+    const message = error instanceof KeyringError ? error.message : 'is invalid';
+    ctx.addIssue({ code: 'custom', path: ['ENCRYPTION_KEYS'], message });
   }
 });
 

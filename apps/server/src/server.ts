@@ -1,7 +1,7 @@
 // Process entry point: config → pool → app + delivery worker → listen, plus signal handling.
 import { buildApp } from './app.ts';
 import { ConfigError, loadConfig } from './config.ts';
-import { plaintextBox } from './crypto/secret-box.ts';
+import { createAesGcmBox, parseKeyring } from './crypto/secret-box.ts';
 import { createDb, createPool } from './db/client.ts';
 import { createDecider } from './delivery/classify.ts';
 import { createHttpSender } from './delivery/http-client.ts';
@@ -23,7 +23,10 @@ function readConfig() {
 const config = readConfig();
 const pool = createPool(config.DATABASE_URL);
 const db = createDb(pool);
-const secretBox = plaintextBox; // AES-256-GCM keyring from Day 8
+// loadConfig has validated the keyring; outside tests both variables are required.
+const secretBox = createAesGcmBox(
+  parseKeyring(config.ENCRYPTION_KEYS ?? '', config.ENCRYPTION_ACTIVE_KEY_ID ?? ''),
+);
 
 // The worker is created first so the app can wake it; it starts after the server listens.
 let wake = () => {};

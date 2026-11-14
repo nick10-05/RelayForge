@@ -8,6 +8,8 @@ import { createEngineContext } from '../testing/engine-context.ts';
 import { claimDue } from './claim.ts';
 import { createDecider } from './classify.ts';
 import { createHttpSender } from './http-client.ts';
+import { storeInvalidEvent } from '../ingest/store.ts';
+import { redeliverDead, replayEvent } from './redeliver.ts';
 import { createWorker } from './worker.ts';
 
 // Real sender and classifier. Base 0 makes backoff 0 so retries are immediately due;
@@ -272,5 +274,41 @@ describe('engine invariants', () => {
     expect(chaos.requestsTo('/ok')).toHaveLength(3); // redirects were never followed
   }, 30_000);
 
-  test.todo('#8: an invalid-signature event never produces a delivery or outbound request (Day 8)');
+  test('#8: an invalid-signature event never produces a delivery or outbound request', async () => {
+    const { user, endpoint, deliveryIds } = await ctx.seed({ destinationUrl: `${chaos.url}/ok` });
+    const { eventId } = await storeInvalidEvent(
+      ctx.db,
+      {
+        endpointId: endpoint.id,
+        method: 'POST',
+        path: `/in/${endpoint.slug}`,
+        query: null,
+        headers: { 'content-type': 'application/json' },
+        body: Buffer.from('{"forged":true}'),
+        contentType: 'application/json',
+        sourceIp: '203.0.113.9',
+        receivedAt: new Date(),
+      },
+      'mismatch',
+    );
+
+    // Every path that could create a delivery refuses it.
+    expect(await replayEvent(ctx.db, user.id, eventId)).toEqual({ kind: 'invalid_signature' });
+    expect(await redeliverDead(ctx.db, user.id, endpoint.id)).toEqual({
+      kind: 'done',
+      created: 0,
+      skipped: 0,
+    });
+    await createWorker({ db: ctx.db, pool: ctx.pool, send: simpleSender, decide }).drain();
+
+    const forDeliveries = await ctx.db
+      .select()
+      .from(deliveries)
+      .where(eq(deliveries.eventId, eventId));
+    expect(forDeliveries).toHaveLength(0);
+    // The worker did run (the valid event was delivered); the invalid one never went out.
+    expect(await statuses(deliveryIds)).toEqual(['succeeded']);
+    expect(chaos.requests.map((r) => r.headers['x-relayforge-id'])).not.toContain(eventId);
+    expect(chaos.requests).toHaveLength(1);
+  });
 });

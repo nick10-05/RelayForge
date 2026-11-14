@@ -46,6 +46,8 @@ export const DELIVERY_TRIGGERS = ['auto', 'manual'] as const;
 export type DeliveryStatus = (typeof DELIVERY_STATUSES)[number];
 export type DeadReason = (typeof DEAD_REASONS)[number];
 export type DedupeSource = (typeof DEDUPE_SOURCES)[number];
+export type VerifyScheme = (typeof VERIFY_SCHEMES)[number];
+export type VerifyEncoding = (typeof VERIFY_ENCODINGS)[number];
 
 /** SQL `col IN ('a','b')` for a CHECK constraint. Values are our own constants, never input. */
 const oneOf = (column: AnyPgColumn, values: readonly string[]) =>

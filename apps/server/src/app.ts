@@ -3,10 +3,11 @@ import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import type pg from 'pg';
+import { apiKeyRoutes } from './auth/api-keys.ts';
 import { authRoutes } from './auth/routes.ts';
 import { checkDatabase } from './db/client.ts';
 import type { Db } from './db/client.ts';
-import { plaintextBox } from './crypto/secret-box.ts';
+import { unconfiguredBox } from './crypto/secret-box.ts';
 import type { SecretBox } from './crypto/secret-box.ts';
 import { redeliveryRoutes } from './delivery/routes.ts';
 import { destinationRoutes } from './destinations/routes.ts';
@@ -17,17 +18,43 @@ import { ingestRoutes } from './ingest/routes.ts';
 import type { Config } from './config.ts';
 import type { ResolveFn } from './delivery/ssrf.ts';
 
-/** Log paths that must never be written in clear text. */
+/**
+ * Log paths that must never be written in clear text (design §7.4). Fastify's request
+ * serializer doesn't log headers or bodies, so these guard against code that logs them
+ * explicitly (`log.info({ headers })`, an error carrying a config object, ...).
+ */
+const SECRET_HEADERS = [
+  'authorization',
+  'cookie',
+  'set-cookie',
+  'x-api-key',
+  'x-relayforge-signature',
+  'webhook-signature',
+  'x-hub-signature',
+  'x-hub-signature-256',
+  'x-shopify-hmac-sha256',
+  'stripe-signature',
+];
+const SECRET_FIELDS = [
+  'password',
+  'passwordHash',
+  'secret',
+  'secretHash',
+  'signingSecret',
+  'previousSigningSecret',
+  'verifySecret',
+  'token',
+  'key',
+  'apiKey',
+];
 export const REDACT_PATHS = [
-  'req.headers.authorization',
-  'req.headers.cookie',
-  'req.headers["set-cookie"]',
-  'req.headers["x-relayforge-signature"]',
-  'req.headers["webhook-signature"]',
-  'req.headers["x-hub-signature-256"]',
-  '*.password',
-  '*.secret',
-  '*.token',
+  // Hyphenated names need pino's bracket syntax: headers["x-hub-signature-256"].
+  ...SECRET_HEADERS.map((h) => (/^[a-z]+$/.test(h) ? `.${h}` : `["${h}"]`)).flatMap((h) => [
+    `req.headers${h}`,
+    `headers${h}`,
+    `*.headers${h}`,
+  ]),
+  ...SECRET_FIELDS.flatMap((f) => [f, `*.${f}`, `*.*.${f}`]),
 ];
 
 export type AppDeps = {
@@ -37,10 +64,12 @@ export type AppDeps = {
   db: Db;
   /** Wakes the delivery worker (new deliveries, redelivery, endpoint resumed, destination re-enabled). */
   wakeWorker?: () => void;
-  /** Seals stored secrets (AES-GCM from Day 8). */
+  /** Seals stored secrets (AES-256-GCM keyring). Without one, secret features fail closed. */
   secretBox?: SecretBox;
   /** DNS resolver for destination validation (injectable for tests). */
   resolve?: ResolveFn;
+  /** Where logs go (default stdout). Tests capture it to prove secrets are redacted. */
+  logStream?: { write: (line: string) => void };
 };
 
 export function buildApp({
@@ -49,12 +78,14 @@ export function buildApp({
   db,
   wakeWorker = () => {},
   resolve,
-  secretBox = plaintextBox,
+  secretBox = unconfiguredBox,
+  logStream,
 }: AppDeps): FastifyInstance {
   const app = Fastify({
     logger: {
       level: config.LOG_LEVEL,
       redact: { paths: REDACT_PATHS, censor: '[REDACTED]' },
+      ...(logStream && { stream: logStream }),
     },
     // Each request gets an id in the logs; honour an incoming one for tracing across hops.
     requestIdHeader: 'x-request-id',
@@ -64,6 +95,7 @@ export function buildApp({
   app.setSerializerCompiler(serializerCompiler);
   registerErrorHandling(app);
   app.decorateRequest('user', null);
+  app.decorateRequest('authMethod', null);
   void app.register(cookie);
 
   // Graceful shutdown: once closing, tell clients not to reuse the connection, so
@@ -89,7 +121,8 @@ export function buildApp({
 
   const production = config.NODE_ENV === 'production';
   void app.register(authRoutes, { prefix: '/api/v1/auth', db });
-  void app.register(endpointRoutes, { prefix: '/api/v1/endpoints', db, wakeWorker });
+  void app.register(apiKeyRoutes, { prefix: '/api/v1/api-keys', db });
+  void app.register(endpointRoutes, { prefix: '/api/v1/endpoints', db, wakeWorker, secretBox });
   void app.register(destinationRoutes, {
     prefix: '/api/v1/endpoints/:endpointId/destinations',
     db,
@@ -101,7 +134,7 @@ export function buildApp({
   });
   void app.register(eventRoutes, { prefix: '/api/v1', db });
   void app.register(redeliveryRoutes, { prefix: '/api/v1', db, wakeWorker });
-  void app.register(ingestRoutes, { prefix: '/in', db, wakeWorker });
+  void app.register(ingestRoutes, { prefix: '/in', db, wakeWorker, secretBox });
 
   return app;
 }

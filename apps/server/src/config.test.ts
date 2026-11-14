@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'vitest';
 import { ConfigError, loadConfig } from './config.ts';
+import { generateKeyEntry } from './crypto/secret-box.ts';
 
 const DB = 'postgres://user:s3cret-value@localhost:5433/relayforge_dev';
+const KEYS = generateKeyEntry('k1');
+const BASE = { DATABASE_URL: DB, ENCRYPTION_KEYS: KEYS, ENCRYPTION_ACTIVE_KEY_ID: 'k1' };
 
 function errorOf(fn: () => unknown): ConfigError {
   try {
@@ -14,8 +17,8 @@ function errorOf(fn: () => unknown): ConfigError {
 }
 
 describe('loadConfig', () => {
-  test('applies defaults when only DATABASE_URL is set', () => {
-    const config = loadConfig({ DATABASE_URL: DB });
+  test('applies defaults when only the required variables are set', () => {
+    const config = loadConfig({ ...BASE });
     expect(config).toEqual({
       NODE_ENV: 'development',
       HOST: '127.0.0.1',
@@ -26,12 +29,14 @@ describe('loadConfig', () => {
       SHUTDOWN_TIMEOUT_MS: 10000,
       ALLOW_PRIVATE_DESTINATIONS: false,
       WORKER_CONCURRENCY: 8,
+      ENCRYPTION_KEYS: KEYS,
+      ENCRYPTION_ACTIVE_KEY_ID: 'k1',
     });
   });
 
   test('parses provided values and coerces numbers', () => {
     const config = loadConfig({
-      DATABASE_URL: DB,
+      ...BASE,
       DATABASE_DIRECT_URL: 'postgresql://direct@localhost/db',
       NODE_ENV: 'production',
       HOST: '0.0.0.0',
@@ -46,11 +51,11 @@ describe('loadConfig', () => {
   });
 
   test('treats empty strings as unset', () => {
-    expect(loadConfig({ DATABASE_URL: DB, PORT: '' }).PORT).toBe(3000);
+    expect(loadConfig({ ...BASE, PORT: '' }).PORT).toBe(3000);
   });
 
   test('ignores unrelated environment variables', () => {
-    expect(() => loadConfig({ DATABASE_URL: DB, PATH: '/usr/bin' })).not.toThrow();
+    expect(() => loadConfig({ ...BASE, PATH: '/usr/bin' })).not.toThrow();
   });
 
   test('requires DATABASE_URL', () => {
@@ -60,7 +65,7 @@ describe('loadConfig', () => {
   });
 
   test('rejects a non-postgres DATABASE_URL', () => {
-    const error = errorOf(() => loadConfig({ DATABASE_URL: 'mysql://localhost/db' }));
+    const error = errorOf(() => loadConfig({ ...BASE, DATABASE_URL: 'mysql://localhost/db' }));
     expect(error.issues).toEqual(['DATABASE_URL: must be a postgres:// URL']);
   });
 
@@ -73,7 +78,7 @@ describe('loadConfig', () => {
     ['SHUTDOWN_TIMEOUT_MS', '10'],
     ['ALLOW_PRIVATE_DESTINATIONS', 'yes'],
   ])('rejects invalid %s=%s', (key, value) => {
-    const error = errorOf(() => loadConfig({ DATABASE_URL: DB, [key]: value }));
+    const error = errorOf(() => loadConfig({ ...BASE, [key]: value }));
     expect(error.issues.some((i) => i.startsWith(`${key}:`))).toBe(true);
   });
 
@@ -92,12 +97,30 @@ describe('loadConfig', () => {
 
   test('ALLOW_PRIVATE_DESTINATIONS: parsed as a boolean, refused in production', () => {
     expect(
-      loadConfig({ DATABASE_URL: DB, ALLOW_PRIVATE_DESTINATIONS: 'true' })
-        .ALLOW_PRIVATE_DESTINATIONS,
+      loadConfig({ ...BASE, ALLOW_PRIVATE_DESTINATIONS: 'true' }).ALLOW_PRIVATE_DESTINATIONS,
     ).toBe(true);
     const error = errorOf(() =>
-      loadConfig({ DATABASE_URL: DB, NODE_ENV: 'production', ALLOW_PRIVATE_DESTINATIONS: 'true' }),
+      loadConfig({ ...BASE, NODE_ENV: 'production', ALLOW_PRIVATE_DESTINATIONS: 'true' }),
     );
     expect(error.issues).toEqual(['ALLOW_PRIVATE_DESTINATIONS: must not be true in production']);
+  });
+
+  test('encryption keyring: required outside tests, validated, values never echoed', () => {
+    const missing = errorOf(() => loadConfig({ DATABASE_URL: DB }));
+    expect(missing.issues).toEqual([
+      'ENCRYPTION_KEYS: is required',
+      'ENCRYPTION_ACTIVE_KEY_ID: is required',
+    ]);
+    expect(() => loadConfig({ DATABASE_URL: DB, NODE_ENV: 'test' })).not.toThrow();
+
+    const material = Buffer.alloc(16, 9).toString('base64'); // 16 bytes: too short
+    const bad = errorOf(() => loadConfig({ ...BASE, ENCRYPTION_KEYS: `k1:${material}` }));
+    expect(bad.issues).toEqual([
+      'ENCRYPTION_KEYS: ENCRYPTION_KEYS key "k1": must be 32 bytes, base64',
+    ]);
+    expect(bad.message).not.toContain(material);
+
+    const wrongActive = errorOf(() => loadConfig({ ...BASE, ENCRYPTION_ACTIVE_KEY_ID: 'k2' }));
+    expect(wrongActive.issues[0]).toMatch(/ACTIVE_KEY_ID must name a key/);
   });
 });

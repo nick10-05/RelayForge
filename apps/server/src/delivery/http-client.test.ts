@@ -7,7 +7,7 @@ import { startChaosReceiver } from '../testing/chaos-receiver.ts';
 import type { ChaosReceiver } from '../testing/chaos-receiver.ts';
 import { fakeResolve } from '../testing/fake-dns.ts';
 import { MAX_RESPONSE_BYTES, buildForwardHeaders, createHttpSender } from './http-client.ts';
-import { plaintextBox } from '../crypto/secret-box.ts';
+import { testSecretBox } from '../testing/test-keys.ts';
 import { generateSigningSecret } from './signing.ts';
 import type { ClaimedDelivery } from './types.ts';
 
@@ -179,12 +179,19 @@ describe('signed deliveries', () => {
   test('signs with current + previous secret; the reference library verifies', async () => {
     const current = generateSigningSecret();
     const previous = generateSigningSecret();
-    const send = createHttpSender({ production: false, allowPrivate: true });
+    const send = createHttpSender({
+      production: false,
+      allowPrivate: true,
+      secretBox: testSecretBox,
+    });
     const result = await send(
       makeClaim(`${chaos.url}/ok`, {
         signingSecrets: [
-          { column: 'signing_secret_enc', sealed: plaintextBox.seal(current, REF) },
-          { column: 'prev_signing_secret_enc', sealed: plaintextBox.seal(previous, REF) },
+          { column: 'signing_secret_enc', sealed: testSecretBox.seal(current, REF) },
+          {
+            column: 'prev_signing_secret_enc',
+            sealed: testSecretBox.seal(previous, { ...REF, column: 'prev_signing_secret_enc' }),
+          },
         ],
       }),
     );
@@ -205,10 +212,15 @@ describe('signed deliveries', () => {
 
   test('the timestamp is taken per attempt', async () => {
     let clock = 1_800_000_000_000;
-    const send = createHttpSender({ production: false, allowPrivate: true, now: () => clock });
+    const send = createHttpSender({
+      production: false,
+      allowPrivate: true,
+      secretBox: testSecretBox,
+      now: () => clock,
+    });
     const claim = makeClaim(`${chaos.url}/ok`, {
       signingSecrets: [
-        { column: 'signing_secret_enc', sealed: plaintextBox.seal(generateSigningSecret(), REF) },
+        { column: 'signing_secret_enc', sealed: testSecretBox.seal(generateSigningSecret(), REF) },
       ],
     });
     await send(claim);
@@ -224,6 +236,23 @@ describe('signed deliveries', () => {
     const req = chaos.requests.at(-1)!;
     expect(req.headers['x-relayforge-signature']).toBeUndefined();
     expect(req.headers['x-relayforge-timestamp']).toBeUndefined();
+  });
+
+  test('a secret sealed for another row (AAD mismatch) is never sent unsigned', async () => {
+    const send = createHttpSender({
+      production: false,
+      allowPrivate: true,
+      secretBox: testSecretBox,
+    });
+    const before = chaos.requests.length;
+    const sealedElsewhere = testSecretBox.seal(generateSigningSecret(), { ...REF, rowId: 'dst-2' });
+    const result = await send(
+      makeClaim(`${chaos.url}/ok`, {
+        signingSecrets: [{ column: 'signing_secret_enc', sealed: sealedElsewhere }],
+      }),
+    );
+    expect(result.errorCode).toBe('SIGNING_FAILED');
+    expect(chaos.requests).toHaveLength(before);
   });
 
   test('an unopenable secret is never sent unsigned and never echoed', async () => {
