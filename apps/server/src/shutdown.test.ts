@@ -32,7 +32,10 @@ describe('createShutdown', () => {
       db: createDb(pool),
     });
     let finished = false;
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => (markStarted = resolve));
     app.get('/slow', async () => {
+      markStarted();
       await new Promise((resolve) => setTimeout(resolve, 200));
       finished = true;
       return { done: true };
@@ -42,7 +45,9 @@ describe('createShutdown', () => {
     if (address === null || typeof address === 'string') throw new Error('no port');
 
     const request = fetch(`http://127.0.0.1:${address.port}/slow`);
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // Wait until the request is really inside the handler (a fixed sleep was flaky under load:
+    // shutdown sometimes closed the server before the request had arrived).
+    await started;
     const exit = vi.fn();
     await createShutdown({ app, pool, timeoutMs: 5000, exit })('SIGTERM');
 

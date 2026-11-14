@@ -44,7 +44,7 @@ describe('claimDue', () => {
   });
 
   test('skips rows not yet due', async () => {
-    await ctx.seed({ nextAttemptAt: new Date(Date.now() + 60_000) });
+    await ctx.seed({ dueInMs: 60_000 });
     expect(await claimDue(ctx.pool, { workerId: 'w1', batchSize: 10 })).toHaveLength(0);
   });
 
@@ -62,8 +62,8 @@ describe('claimDue', () => {
   });
 
   test('oldest due first', async () => {
-    const late = await ctx.seed({ nextAttemptAt: new Date(Date.now() - 1_000) });
-    const early = await ctx.seed({ nextAttemptAt: new Date(Date.now() - 10_000) });
+    const late = await ctx.seed({ dueInMs: -1_000 });
+    const early = await ctx.seed({ dueInMs: -10_000 });
     const [first] = await claimDue(ctx.pool, { workerId: 'w1', batchSize: 1 });
     expect(first?.id).toBe(early.deliveryIds[0]);
     expect(late.deliveryIds).toHaveLength(1);

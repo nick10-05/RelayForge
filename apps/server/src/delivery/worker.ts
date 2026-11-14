@@ -57,7 +57,13 @@ export function createWorker(options: WorkerOptions) {
         errorMessage: error instanceof Error ? error.message : String(error),
       };
     }
-    return completeDelivery(db, claim, attempt, decide(claim, attempt));
+    try {
+      return await completeDelivery(db, claim, attempt, decide(claim, attempt));
+    } catch {
+      // Same as the scheduler: the lease expires and the delivery is retried (or reaped).
+      // One bad delivery must not reject the whole cycle and hide the others' results.
+      return false;
+    }
   }
 
   async function runCycle(): Promise<CycleResult> {

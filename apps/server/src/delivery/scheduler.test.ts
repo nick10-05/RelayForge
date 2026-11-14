@@ -61,9 +61,14 @@ describe('delivery scheduler', () => {
 
   test('idle with nothing scheduled: sleeps with zero DB queries; wake() sends at once', async () => {
     const s = scheduler();
-    s.start();
-    await sleep(100); // catch-up claim + next-due check, then indefinite sleep
     const query = vi.spyOn(ctx.pool, 'query');
+    s.start();
+    // Startup = reap + catch-up claim + next-due check (3 queries), then indefinite sleep.
+    // Wait for the third to settle instead of guessing a fixed delay.
+    await waitFor(() => query.mock.calls.length >= 3);
+    await query.mock.results[2]!.value;
+    await sleep(20);
+    query.mockClear();
     const connect = vi.spyOn(ctx.pool, 'connect');
     await sleep(500);
     expect(query).not.toHaveBeenCalled();
@@ -79,12 +84,9 @@ describe('delivery scheduler', () => {
   });
 
   test('sleeps until the earliest next_attempt_at, then sends', async () => {
-    await ctx.seed({
-      destinationUrl: `${chaos.url}/ok`,
-      nextAttemptAt: new Date(Date.now() + 700),
-    });
+    const startedAt = Date.now(); // before the seed, so the due time is ≥ startedAt + 700
+    await ctx.seed({ destinationUrl: `${chaos.url}/ok`, dueInMs: 700 });
     const s = scheduler();
-    const startedAt = Date.now();
     s.start();
     await sleep(300);
     expect(chaos.requests).toHaveLength(0);
@@ -97,7 +99,7 @@ describe('delivery scheduler', () => {
     expect(await nextDueDelay(ctx.pool)).toBeNull();
     await ctx.seed({
       destinationUrl: `${chaos.url}/ok`,
-      nextAttemptAt: new Date(Date.now() + 60_000),
+      dueInMs: 60_000,
     });
     const delay = await nextDueDelay(ctx.pool);
     expect(delay).toBeGreaterThan(55_000);
@@ -177,5 +179,29 @@ describe('delivery scheduler', () => {
       .from(deliveries)
       .where(inArray(deliveries.id, deliveryIds));
     expect(done).toMatchObject({ attemptCount: 2 });
+  });
+
+  test('stop() arriving during the reap query claims nothing new', async () => {
+    await ctx.seed({ destinationUrl: `${chaos.url}/ok` });
+    const s = scheduler();
+    let stopping: Promise<unknown> | undefined;
+    const original = ctx.pool.query.bind(ctx.pool);
+    const spy = vi.spyOn(ctx.pool, 'query') as unknown as {
+      mockImplementation: (fn: (text: unknown, values?: unknown) => Promise<unknown>) => void;
+    };
+    spy.mockImplementation((text, values) => {
+      if (!stopping && typeof text === 'string' && text.includes('lease expired on the final')) {
+        stopping = s.stop(1000); // SIGTERM lands while the reap is running
+      }
+      return original(text as string, values as unknown[]);
+    });
+    s.start();
+    await waitFor(() => stopping !== undefined);
+    expect(await stopping).toEqual({ drained: true, abandoned: 0 });
+    vi.restoreAllMocks();
+
+    expect(chaos.requests).toHaveLength(0);
+    const [r] = await ctx.db.select().from(deliveries);
+    expect(r).toMatchObject({ status: 'pending', attemptCount: 0 });
   });
 });

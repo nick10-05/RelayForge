@@ -8,6 +8,7 @@
 //   /reset                 destroys the TCP connection without a response
 //   /big/:bytes            200 with a body of that many bytes
 //   /redirect              302 → /ok (RelayForge must not follow it)
+//   /binary                200 with NUL bytes in the body
 //   /flaky/:n              500 for the first n requests per delivery, then 200
 //                          (keyed by X-RelayForge-Delivery-Id, else the path)
 import { createServer } from 'node:http';
@@ -81,6 +82,13 @@ export async function startChaosReceiver(): Promise<ChaosReceiver> {
       }
       case 'redirect':
         return send(302, { location: '/ok' });
+      case 'binary': {
+        // 200 with NUL bytes in the body, like a gzip or protobuf reply.
+        const body = Buffer.from([0x00, 0x1f, 0x8b, 0x00, 0x41, 0x00]);
+        res.writeHead(200, { 'content-type': 'application/octet-stream' });
+        res.end(body);
+        return;
+      }
       case 'flaky': {
         const failures = Number(arg) || 1;
         const keyHeader = headers['x-relayforge-delivery-id'];

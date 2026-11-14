@@ -23,6 +23,15 @@ export function createEngineContext() {
         sql`UPDATE deliveries SET next_attempt_at = now() - interval '1 second' WHERE status = 'in_flight'`,
       );
     },
+    /** Milliseconds until a delivery's next_attempt_at, on the DB clock (no host/DB skew). */
+    msUntilDue: async (deliveryId: string): Promise<number> => {
+      const result = await pool.query<{ ms: string }>(
+        `SELECT EXTRACT(EPOCH FROM (next_attempt_at - now())) * 1000 AS ms
+         FROM deliveries WHERE id = $1`,
+        [deliveryId],
+      );
+      return Number(result.rows[0]!.ms);
+    },
     seed: (opts?: SeedOptions) => seed(db, opts),
     close: () => pool.end(),
   };
@@ -34,7 +43,8 @@ export type SeedOptions = {
   maxAttempts?: number;
   paused?: boolean;
   enabled?: boolean;
-  nextAttemptAt?: Date;
+  /** Due this many ms from now on the DATABASE clock (tests never mix host and DB time). */
+  dueInMs?: number;
   timeoutMs?: number;
 };
 
@@ -86,7 +96,9 @@ async function seed(db: Db, opts: SeedOptions = {}) {
         eventId: event!.id,
         destinationId: destination!.id,
         maxAttempts: opts.maxAttempts ?? 10,
-        ...(opts.nextAttemptAt && { nextAttemptAt: opts.nextAttemptAt }),
+        ...(opts.dueInMs !== undefined && {
+          nextAttemptAt: sql`now() + ${Math.round(opts.dueInMs)}::int * interval '1 millisecond'`,
+        }),
       })
       .returning();
     deliveryIds.push(delivery!.id);

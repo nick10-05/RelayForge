@@ -15,6 +15,13 @@ import { createWorker } from './worker.ts';
 const simpleSender = createHttpSender({ production: false, allowPrivate: true });
 const decide = createDecider({ baseMs: 0, capMs: 3_600_000, random: Math.random });
 
+const pick = (r: typeof deliveries.$inferSelect) => ({
+  status: r.status,
+  deadReason: r.deadReason,
+  attemptCount: r.attemptCount,
+  leaseOwner: r.leaseOwner,
+});
+
 describe('engine invariants', () => {
   const ctx = createEngineContext();
   let chaos: ChaosReceiver;
@@ -180,9 +187,9 @@ describe('engine invariants', () => {
     await createWorker({ db: ctx.db, pool: ctx.pool, send: simpleSender, decide }).runCycle();
     const [row] = await ctx.db.select().from(deliveries).where(eq(deliveries.id, deliveryIds[0]!));
     expect(row!.status).toBe('pending');
-    const delayMs = row!.nextAttemptAt.getTime() - Date.now();
+    const delayMs = await ctx.msUntilDue(deliveryIds[0]!); // DB clock: immune to host skew
     expect(delayMs).toBeGreaterThan(110_000);
-    expect(delayMs).toBeLessThanOrEqual(121_000);
+    expect(delayMs).toBeLessThanOrEqual(120_000);
   });
 
   test('#7: a hung receiver times out and is retried, recorded as TIMEOUT', async () => {
@@ -201,29 +208,69 @@ describe('engine invariants', () => {
     expect(attempts.map((a) => a.errorCode)).toEqual(['TIMEOUT', 'TIMEOUT']);
   });
 
-  test('chaos run: mixed receivers all reach the right terminal state', async () => {
+  test('chaos run: every receiver behaviour reaches the right final state and dead_reason', async () => {
+    // [path, status, deadReason, attempts per delivery] with maxAttempts 3.
     const cases = [
-      ['/ok', 'succeeded'],
-      ['/flaky/2', 'succeeded'],
-      ['/slow/50', 'succeeded'],
-      ['/status/503', 'dead'],
-      ['/reset', 'dead'],
-      ['/status/400', 'dead'],
-      ['/redirect', 'dead'],
+      ['/ok', 'succeeded', null, 1],
+      ['/flaky/2', 'succeeded', null, 3],
+      ['/slow/50', 'succeeded', null, 1],
+      ['/binary', 'succeeded', null, 1], // NUL bytes in the response must not break completion
+      ['/status/500', 'dead', 'exhausted', 3],
+      ['/status/503', 'dead', 'exhausted', 3],
+      ['/retry-after/0', 'dead', 'exhausted', 3], // 429 + Retry-After
+      ['/status/408', 'dead', 'exhausted', 3],
+      ['/hang', 'dead', 'exhausted', 3], // TIMEOUT each time
+      ['/reset', 'dead', 'exhausted', 3], // ECONNRESET each time
+      ['/status/400', 'dead', 'non_retryable_status', 1],
+      ['/status/404', 'dead', 'non_retryable_status', 1],
+      ['/redirect', 'dead', 'redirect', 1],
+      ['/status/301', 'dead', 'redirect', 1],
     ] as const;
     const seeded = await Promise.all(
       cases.map(([path]) =>
-        ctx.seed({ destinationUrl: `${chaos.url}${path}`, deliveries: 3, maxAttempts: 3 }),
+        ctx.seed({
+          destinationUrl: `${chaos.url}${path}`,
+          deliveries: 3,
+          maxAttempts: 3,
+          timeoutMs: 1000,
+        }),
       ),
     );
     const workers = Array.from({ length: 4 }, (_, i) =>
-      createWorker({ db: ctx.db, pool: ctx.pool, send: simpleSender, decide, workerId: `c${i}` }),
+      createWorker({
+        db: ctx.db,
+        pool: ctx.pool,
+        send: simpleSender,
+        decide,
+        workerId: `c${i}`,
+        batchSize: 16,
+      }),
     );
     await Promise.all(workers.map((w) => w.drain()));
-    for (const [i, [, expected]] of cases.entries()) {
-      expect(new Set(await statuses(seeded[i]!.deliveryIds))).toEqual(new Set([expected]));
+
+    for (const [i, [path, status, deadReason, attempts]] of cases.entries()) {
+      const ids = seeded[i]!.deliveryIds;
+      const rows = await ctx.db.select().from(deliveries).where(inArray(deliveries.id, ids));
+      for (const row of rows) {
+        expect({ path, ...pick(row) }).toEqual({
+          path,
+          status,
+          deadReason,
+          attemptCount: attempts,
+          leaseOwner: null,
+        });
+      }
+      const logged = await ctx.db
+        .select()
+        .from(deliveryAttempts)
+        .where(inArray(deliveryAttempts.deliveryId, ids));
+      expect({ path, n: logged.length }).toEqual({ path, n: 3 * attempts });
+      // Every attempt reached the receiver exactly once (for /hang and /reset too: the
+      // request is read before the connection is held or cut).
+      expect({ path, n: chaos.requestsTo(path).length }).toEqual({ path, n: 3 * attempts });
     }
-  });
+    expect(chaos.requestsTo('/ok')).toHaveLength(3); // redirects were never followed
+  }, 30_000);
 
   test.todo('#8: an invalid-signature event never produces a delivery or outbound request (Day 8)');
 });

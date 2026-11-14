@@ -145,6 +145,7 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
           continue;
         }
         await reapExhausted(pool);
+        if (!running) break; // stop() arrived during the reap: claim nothing new
         const claims = await claimDue(pool, { workerId, batchSize: free, leaseMs });
         if (!running) {
           // Stopped while claiming: still send what we hold (stop() waits for it).

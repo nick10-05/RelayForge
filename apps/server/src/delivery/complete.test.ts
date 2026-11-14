@@ -55,7 +55,6 @@ describe('completeDelivery (fenced)', () => {
   test('retry: back to pending, due after the delay', async () => {
     await ctx.seed();
     const claim = await claimOne();
-    const before = Date.now();
     await completeDelivery(ctx.db, claim, ok(503), { kind: 'retry', delayMs: 30_000 });
 
     const r = await row(claim.id);
@@ -65,8 +64,9 @@ describe('completeDelivery (fenced)', () => {
       lastStatusCode: 503,
       lastError: 'HTTP 503',
     });
-    expect(r.nextAttemptAt.getTime()).toBeGreaterThanOrEqual(before + 29_000);
-    expect(r.nextAttemptAt.getTime()).toBeLessThanOrEqual(Date.now() + 31_000);
+    const due = await ctx.msUntilDue(claim.id); // DB clock on both sides
+    expect(due).toBeGreaterThan(29_000);
+    expect(due).toBeLessThanOrEqual(30_000);
   });
 
   test('dead: terminal with reason', async () => {
@@ -156,5 +156,31 @@ describe('completeDelivery (fenced)', () => {
       false,
     );
     expect((await row(claim.id)).status).toBe('succeeded');
+  });
+
+  test('NUL bytes from the receiver (binary body, headers, errors) are stored, not fatal', async () => {
+    await ctx.seed();
+    const claim = await claimOne();
+    const nul = String.fromCharCode(0);
+    const attempt: AttemptResult = {
+      ...ok(200),
+      responseHeaders: { 'x-odd': `a${nul}b`, 'set-cookie': [`c${nul}`] },
+      responseBodySnippet: `${nul}gzip${nul}`,
+    };
+    expect(await completeDelivery(ctx.db, claim, attempt, { kind: 'succeeded' })).toBe(true);
+    const [log] = await attempts(claim.id);
+    expect(log!.responseBodySnippet).toBe('�gzip�');
+    expect(log!.responseHeaders).toEqual({ 'x-odd': 'a�b', 'set-cookie': ['c�'] });
+
+    await ctx.seed();
+    const failing = await claimOne();
+    const err: AttemptResult = {
+      ...ok(),
+      statusCode: undefined,
+      errorCode: 'X',
+      errorMessage: nul,
+    };
+    expect(await completeDelivery(ctx.db, failing, err, { kind: 'retry', delayMs: 0 })).toBe(true);
+    expect((await row(failing.id)).lastError).toBe('X: �');
   });
 });

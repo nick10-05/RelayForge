@@ -4,7 +4,26 @@ import { deliveries, deliveryAttempts } from '../db/schema.ts';
 import type { AttemptResult, ClaimedDelivery, Outcome } from './types.ts';
 
 const MAX_ERROR_LENGTH = 1000;
-const clip = (s: string | undefined) => (s === undefined ? null : s.slice(0, MAX_ERROR_LENGTH));
+
+/**
+ * Postgres `text` and `jsonb` reject U+0000. Receiver-controlled strings (a binary or gzip
+ * response body, odd headers) can contain it; without this the attempt can never be
+ * recorded, the completion throws every time, and the delivery is re-sent until exhausted.
+ */
+export const dbSafe = (s: string) => s.replaceAll('\u0000', '\uFFFD');
+const clip = (s: string | undefined) =>
+  s === undefined ? null : dbSafe(s.slice(0, MAX_ERROR_LENGTH));
+
+function dbSafeHeaders(
+  headers: Record<string, string | string[]> | undefined,
+): Record<string, string | string[]> | null {
+  if (headers === undefined) return null;
+  const out: Record<string, string | string[]> = {};
+  for (const [name, value] of Object.entries(headers)) {
+    out[dbSafe(name)] = Array.isArray(value) ? value.map(dbSafe) : dbSafe(value);
+  }
+  return out;
+}
 
 /**
  * Records an attempt and applies its outcome, fenced (design §4.4).
@@ -78,8 +97,9 @@ export async function completeDelivery(
       startedAt: attempt.startedAt,
       durationMs: Math.round(attempt.durationMs),
       statusCode: attempt.statusCode ?? null,
-      responseHeaders: attempt.responseHeaders ?? null,
-      responseBodySnippet: attempt.responseBodySnippet ?? null,
+      responseHeaders: dbSafeHeaders(attempt.responseHeaders),
+      responseBodySnippet:
+        attempt.responseBodySnippet === undefined ? null : dbSafe(attempt.responseBodySnippet),
       errorCode: attempt.errorCode ?? null,
       errorMessage: clip(attempt.errorMessage),
     });
