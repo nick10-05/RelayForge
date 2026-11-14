@@ -7,6 +7,14 @@ export default tseslint.config(
 
   js.configs.recommended,
 
+  // k6 load-test scripts run inside k6, not Node: declare k6's globals.
+  {
+    files: ['load/**/*.js'],
+    languageOptions: {
+      globals: { __ENV: 'readonly', __VU: 'readonly', __ITER: 'readonly', console: 'readonly' },
+    },
+  },
+
   // TypeScript files: recommended + type-aware rules (need type information from tsconfig).
   {
     files: ['**/*.ts'],

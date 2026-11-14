@@ -6,6 +6,8 @@ import { createDb, createPool } from './db/client.ts';
 import { createDecider } from './delivery/classify.ts';
 import { createHttpSender } from './delivery/http-client.ts';
 import { createScheduler } from './delivery/scheduler.ts';
+import { createRetentionJob } from './ops/retention.ts';
+import { createStorageGuard } from './ops/storage-guard.ts';
 import { createShutdown } from './shutdown.ts';
 
 function readConfig() {
@@ -30,7 +32,15 @@ const secretBox = createAesGcmBox(
 
 // The worker is created first so the app can wake it; it starts after the server listens.
 let wake = () => {};
-const app = buildApp({ config, pool, db, secretBox, wakeWorker: () => wake() });
+let warn: (obj: object, msg: string) => void = () => {};
+const storageGuard = createStorageGuard({
+  pool,
+  capBytes: config.STORAGE_CAP_BYTES,
+  onError: (err) => warn({ err }, 'storage size check failed'),
+});
+const app = buildApp({ config, pool, db, secretBox, storageGuard, wakeWorker: () => wake() });
+warn = (obj, msg) => app.log.warn(obj, msg);
+const retention = createRetentionJob({ db, log: app.log.child({ component: 'retention' }) });
 const worker = createScheduler({
   db,
   pool,
@@ -51,12 +61,18 @@ pool.on('error', (error) => {
 });
 
 const shutdown = createShutdown({ app, pool, worker, timeoutMs: config.SHUTDOWN_TIMEOUT_MS });
-process.once('SIGTERM', () => void shutdown('SIGTERM'));
-process.once('SIGINT', () => void shutdown('SIGINT'));
+const stopAndShutdown = (signal: string) => {
+  retention.stop();
+  void shutdown(signal);
+};
+process.once('SIGTERM', () => stopAndShutdown('SIGTERM'));
+process.once('SIGINT', () => stopAndShutdown('SIGINT'));
 
 try {
   await app.listen({ host: config.HOST, port: config.PORT });
   worker.start(); // first iteration = catch-up claim for anything left from before a restart
+  void storageGuard.refresh(); // then re-measured lazily, at most hourly, when ingest asks
+  retention.start(); // now, then every 24 h
 } catch (error) {
   app.log.fatal({ err: error }, 'failed to start');
   await pool.end();

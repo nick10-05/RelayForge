@@ -5,6 +5,9 @@ import type { Db } from '../db/client.ts';
 import { endpoints } from '../db/schema.ts';
 import type { VerifyEncoding, VerifyScheme } from '../db/schema.ts';
 import { NOT_FOUND } from '../http/errors.ts';
+import { sendRateLimited } from '../http/limits.ts';
+import type { IngestCounters, Limits } from '../http/limits.ts';
+import type { StorageGuard } from '../ops/storage-guard.ts';
 import { extractDedupeKey } from './dedupe.ts';
 import { storeEvent, storeInvalidEvent } from './store.ts';
 import { verifySignature } from './verify.ts';
@@ -19,7 +22,16 @@ export const INVALID_SIGNATURE = {
   message: 'Signature verification failed',
 } as const;
 
-export type IngestOptions = { db: Db; wakeWorker: () => void; secretBox: SecretBox };
+export const STORAGE_FULL_RETRY_AFTER_S = 600;
+
+export type IngestOptions = {
+  db: Db;
+  wakeWorker: () => void;
+  secretBox: SecretBox;
+  limits: Pick<Limits, 'ingest' | 'invalidSignature'>;
+  counters: IngestCounters;
+  storageGuard: Pick<StorageGuard, 'blocked'>;
+};
 
 /**
  * `ANY /in/:slug[/*]` — receive a webhook. Registered in its own encapsulated plugin so
@@ -27,7 +39,7 @@ export type IngestOptions = { db: Db; wakeWorker: () => void; secretBox: SecretB
  */
 export const ingestRoutes: FastifyPluginAsync<IngestOptions> = async (
   app,
-  { db, wakeWorker, secretBox },
+  { db, wakeWorker, secretBox, limits, counters, storageGuard },
 ) => {
   // Raw bytes in, raw bytes out: never re-serialise, or provider signatures break.
   app.removeAllContentTypeParsers();
@@ -58,6 +70,17 @@ export const ingestRoutes: FastifyPluginAsync<IngestOptions> = async (
       .where(eq(endpoints.slug, slug))
       .limit(1);
     if (!endpoint) return reply.code(404).send(NOT_FOUND);
+
+    // Nearly out of database space: refuse before writing, so providers retry later
+    // instead of us failing writes (or losing the outbox) at the hard limit.
+    if (storageGuard.blocked()) {
+      return reply
+        .code(503)
+        .header('retry-after', String(STORAGE_FULL_RETRY_AFTER_S))
+        .send({ error: 'storage_full', message: 'Temporarily not accepting events' });
+    }
+    const allowed = limits.ingest.take(endpoint.id);
+    if (!allowed.ok) return sendRateLimited(reply, allowed);
 
     const body = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0);
     const headers = cleanHeaders(request.headers);
@@ -91,7 +114,15 @@ export const ingestRoutes: FastifyPluginAsync<IngestOptions> = async (
       }
       const verdict = verifySignature(config, headers, body);
       if (!verdict.ok) {
-        await storeInvalidEvent(db, incoming, verdict.reason);
+        // Separate, stricter budget: forged traffic must not fill storage (each one is kept
+        // 24 h) or use up the endpoint's normal ingest budget for long. Over it, the request
+        // is not stored at all — only counted. The response is the same 401 either way.
+        if (limits.invalidSignature.take(endpoint.id).ok) {
+          await storeInvalidEvent(db, incoming, verdict.reason);
+        } else {
+          const dropped = counters.invalidSignatureDropped;
+          dropped.set(endpoint.id, (dropped.get(endpoint.id) ?? 0) + 1);
+        }
         return reply.code(401).send(INVALID_SIGNATURE);
       }
       signatureStatus = 'valid';

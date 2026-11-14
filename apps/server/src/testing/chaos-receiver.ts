@@ -32,7 +32,7 @@ export type ChaosReceiver = {
   close: () => Promise<void>;
 };
 
-export async function startChaosReceiver(): Promise<ChaosReceiver> {
+export async function startChaosReceiver(port = 0): Promise<ChaosReceiver> {
   const requests: ReceivedRequest[] = [];
   const flakyCounts = new Map<string, number>();
   const sockets = new Set<Socket>();
@@ -107,11 +107,11 @@ export async function startChaosReceiver(): Promise<ChaosReceiver> {
     socket.on('close', () => sockets.delete(socket));
   });
 
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const { port } = server.address() as AddressInfo;
+  await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve));
+  const address = server.address() as AddressInfo;
 
   return {
-    url: `http://127.0.0.1:${port}`,
+    url: `http://127.0.0.1:${address.port}`,
     requests,
     requestsTo: (prefix) => requests.filter((r) => r.path.startsWith(prefix)),
     reset: () => {

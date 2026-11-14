@@ -24,7 +24,34 @@ const configSchema = z.object({
   // Required outside tests; tests build their own keyring.
   ENCRYPTION_KEYS: z.string().optional(),
   ENCRYPTION_ACTIVE_KEY_ID: z.string().optional(),
+  // Browser origins allowed to make state-changing API calls (CSRF check, design §7.3).
+  // Comma-separated. Required in production (the public URL).
+  APP_ORIGIN: z
+    .string()
+    .refine(
+      (v) => v.split(',').every((o) => isOrigin(o.trim())),
+      'must be comma-separated origins like https://app.example.com',
+    )
+    .optional(),
+  // Abuse limits (design §7.5).
+  INGEST_RATE_PER_SECOND: z.coerce.number().positive().max(10_000).default(20),
+  INGEST_BURST: z.coerce.number().int().min(1).max(100_000).default(100),
+  INVALID_SIGNATURE_PER_MINUTE: z.coerce.number().int().min(1).max(10_000).default(10),
+  STORAGE_CAP_BYTES: z.coerce
+    .number()
+    .int()
+    .min(1_000_000)
+    .default(512 * 1024 * 1024),
 });
+
+function isOrigin(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (url.protocol === 'http:' || url.protocol === 'https:') && url.origin === value;
+  } catch {
+    return false;
+  }
+}
 
 const configSchemaWithRules = configSchema.superRefine((config, ctx) => {
   if (config.NODE_ENV === 'production' && config.ALLOW_PRIVATE_DESTINATIONS) {
@@ -33,6 +60,9 @@ const configSchemaWithRules = configSchema.superRefine((config, ctx) => {
       path: ['ALLOW_PRIVATE_DESTINATIONS'],
       message: 'must not be true in production',
     });
+  }
+  if (config.NODE_ENV === 'production' && config.APP_ORIGIN === undefined) {
+    ctx.addIssue({ code: 'custom', path: ['APP_ORIGIN'], message: 'is required in production' });
   }
   const { ENCRYPTION_KEYS: keys, ENCRYPTION_ACTIVE_KEY_ID: active } = config;
   if (keys === undefined || active === undefined) {

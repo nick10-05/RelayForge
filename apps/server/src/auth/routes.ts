@@ -2,6 +2,8 @@ import { eq } from 'drizzle-orm';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import type { Db } from '../db/client.ts';
+import { sendRateLimited } from '../http/limits.ts';
+import type { Limits } from '../http/limits.ts';
 import { users } from '../db/schema.ts';
 import { currentUser, requireUser, sessionCookieOptions } from './guard.ts';
 import { dummyPasswordHash, hashPassword, verifyPassword } from './password.ts';
@@ -27,8 +29,12 @@ const INVALID_CREDENTIALS = {
 type UserRow = { id: string; email: string; createdAt: Date };
 const toUserDto = (u: UserRow) => ({ id: u.id, email: u.email, createdAt: u.createdAt });
 
-export const authRoutes: FastifyPluginAsyncZod<{ db: Db }> = async (app, { db }) => {
+export type AuthRoutesOptions = { db: Db; limits: Pick<Limits, 'authIp' | 'loginEmail'> };
+
+export const authRoutes: FastifyPluginAsyncZod<AuthRoutesOptions> = async (app, { db, limits }) => {
   app.post('/signup', { schema: { body: signupBody } }, async (request, reply) => {
+    const ipLimit = limits.authIp.take(request.ip);
+    if (!ipLimit.ok) return sendRateLimited(reply, ipLimit);
     const { email, password } = request.body;
     const passwordHash = await hashPassword(password);
     const [user] = await db
@@ -50,6 +56,13 @@ export const authRoutes: FastifyPluginAsyncZod<{ db: Db }> = async (app, { db })
 
   app.post('/login', { schema: { body: loginBody } }, async (request, reply) => {
     const { email, password } = request.body;
+    // Checked before argon2id runs, so floods cost us almost nothing. Both buckets are
+    // charged; the response is the same whichever one is empty (and says nothing about
+    // whether the email exists — the per-email limit applies to any address).
+    const ipLimit = limits.authIp.take(request.ip);
+    const emailLimit = limits.loginEmail.take(email);
+    if (!ipLimit.ok) return sendRateLimited(reply, ipLimit);
+    if (!emailLimit.ok) return sendRateLimited(reply, emailLimit);
     const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
 
     if (!user) {

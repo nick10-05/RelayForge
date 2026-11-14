@@ -31,6 +31,10 @@ describe('loadConfig', () => {
       WORKER_CONCURRENCY: 8,
       ENCRYPTION_KEYS: KEYS,
       ENCRYPTION_ACTIVE_KEY_ID: 'k1',
+      INGEST_RATE_PER_SECOND: 20,
+      INGEST_BURST: 100,
+      INVALID_SIGNATURE_PER_MINUTE: 10,
+      STORAGE_CAP_BYTES: 512 * 1024 * 1024,
     });
   });
 
@@ -39,6 +43,7 @@ describe('loadConfig', () => {
       ...BASE,
       DATABASE_DIRECT_URL: 'postgresql://direct@localhost/db',
       NODE_ENV: 'production',
+      APP_ORIGIN: 'https://relayforge.example.com',
       HOST: '0.0.0.0',
       PORT: '8080',
       LOG_LEVEL: 'warn',
@@ -100,7 +105,12 @@ describe('loadConfig', () => {
       loadConfig({ ...BASE, ALLOW_PRIVATE_DESTINATIONS: 'true' }).ALLOW_PRIVATE_DESTINATIONS,
     ).toBe(true);
     const error = errorOf(() =>
-      loadConfig({ ...BASE, NODE_ENV: 'production', ALLOW_PRIVATE_DESTINATIONS: 'true' }),
+      loadConfig({
+        ...BASE,
+        NODE_ENV: 'production',
+        APP_ORIGIN: 'https://relayforge.example.com',
+        ALLOW_PRIVATE_DESTINATIONS: 'true',
+      }),
     );
     expect(error.issues).toEqual(['ALLOW_PRIVATE_DESTINATIONS: must not be true in production']);
   });
@@ -122,5 +132,17 @@ describe('loadConfig', () => {
 
     const wrongActive = errorOf(() => loadConfig({ ...BASE, ENCRYPTION_ACTIVE_KEY_ID: 'k2' }));
     expect(wrongActive.issues[0]).toMatch(/ACTIVE_KEY_ID must name a key/);
+  });
+
+  test('APP_ORIGIN: origins only, required in production', () => {
+    expect(
+      loadConfig({ ...BASE, APP_ORIGIN: 'https://a.example, http://localhost:5173' }).APP_ORIGIN,
+    ).toBe('https://a.example, http://localhost:5173');
+    expect(
+      errorOf(() => loadConfig({ ...BASE, APP_ORIGIN: 'https://a.example/path' })).issues[0],
+    ).toMatch(/^APP_ORIGIN:/);
+    expect(errorOf(() => loadConfig({ ...BASE, NODE_ENV: 'production' })).issues).toEqual([
+      'APP_ORIGIN: is required in production',
+    ]);
   });
 });

@@ -1,4 +1,5 @@
 import cookie from '@fastify/cookie';
+import helmet from '@fastify/helmet';
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
@@ -13,10 +14,14 @@ import { redeliveryRoutes } from './delivery/routes.ts';
 import { destinationRoutes } from './destinations/routes.ts';
 import { endpointRoutes } from './endpoints/routes.ts';
 import { eventRoutes } from './events/routes.ts';
+import { DEV_ORIGINS, createOriginCheck, parseOrigins } from './http/csrf.ts';
 import { registerErrorHandling } from './http/errors.ts';
+import { createIngestCounters, createLimits } from './http/limits.ts';
+import type { IngestCounters, Limits } from './http/limits.ts';
 import { ingestRoutes } from './ingest/routes.ts';
 import type { Config } from './config.ts';
 import type { ResolveFn } from './delivery/ssrf.ts';
+import type { StorageGuard } from './ops/storage-guard.ts';
 
 /**
  * Log paths that must never be written in clear text (design §7.4). Fastify's request
@@ -59,7 +64,16 @@ export const REDACT_PATHS = [
 
 export type AppDeps = {
   config: Pick<Config, 'LOG_LEVEL' | 'NODE_ENV'> &
-    Partial<Pick<Config, 'ALLOW_PRIVATE_DESTINATIONS'>>;
+    Partial<
+      Pick<
+        Config,
+        | 'ALLOW_PRIVATE_DESTINATIONS'
+        | 'APP_ORIGIN'
+        | 'INGEST_RATE_PER_SECOND'
+        | 'INGEST_BURST'
+        | 'INVALID_SIGNATURE_PER_MINUTE'
+      >
+    >;
   pool: pg.Pool;
   db: Db;
   /** Wakes the delivery worker (new deliveries, redelivery, endpoint resumed, destination re-enabled). */
@@ -70,6 +84,12 @@ export type AppDeps = {
   resolve?: ResolveFn;
   /** Where logs go (default stdout). Tests capture it to prove secrets are redacted. */
   logStream?: { write: (line: string) => void };
+  /** Rate limiters; defaults from config. Tests override individual ones. */
+  limits?: Partial<Limits>;
+  /** Refused-but-counted ingest requests. */
+  counters?: IngestCounters;
+  /** Database size guard for ingest (503 when nearly full). None = never blocks. */
+  storageGuard?: Pick<StorageGuard, 'blocked'>;
 };
 
 export function buildApp({
@@ -80,7 +100,18 @@ export function buildApp({
   resolve,
   secretBox = unconfiguredBox,
   logStream,
+  limits: limitOverrides = {},
+  counters = createIngestCounters(),
+  storageGuard = { blocked: () => false },
 }: AppDeps): FastifyInstance {
+  const limits: Limits = {
+    ...createLimits({
+      ingestPerSecond: config.INGEST_RATE_PER_SECOND ?? 20,
+      ingestBurst: config.INGEST_BURST ?? 100,
+      invalidSignaturePerMinute: config.INVALID_SIGNATURE_PER_MINUTE ?? 10,
+    }),
+    ...limitOverrides,
+  };
   const app = Fastify({
     logger: {
       level: config.LOG_LEVEL,
@@ -97,6 +128,10 @@ export function buildApp({
   app.decorateRequest('user', null);
   app.decorateRequest('authMethod', null);
   void app.register(cookie);
+  // Security headers. The CSP defaults (default-src 'self', no inline scripts, no framing)
+  // already fit the same-origin SPA served from this process (Day 10).
+  void app.register(helmet);
+  app.addHook('onRequest', createOriginCheck(parseOrigins(config.APP_ORIGIN ?? DEV_ORIGINS)));
 
   // Graceful shutdown: once closing, tell clients not to reuse the connection, so
   // keep-alive sockets close after their in-flight response instead of holding shutdown open.
@@ -120,7 +155,7 @@ export function buildApp({
   });
 
   const production = config.NODE_ENV === 'production';
-  void app.register(authRoutes, { prefix: '/api/v1/auth', db });
+  void app.register(authRoutes, { prefix: '/api/v1/auth', db, limits });
   void app.register(apiKeyRoutes, { prefix: '/api/v1/api-keys', db });
   void app.register(endpointRoutes, { prefix: '/api/v1/endpoints', db, wakeWorker, secretBox });
   void app.register(destinationRoutes, {
@@ -134,7 +169,15 @@ export function buildApp({
   });
   void app.register(eventRoutes, { prefix: '/api/v1', db });
   void app.register(redeliveryRoutes, { prefix: '/api/v1', db, wakeWorker });
-  void app.register(ingestRoutes, { prefix: '/in', db, wakeWorker, secretBox });
+  void app.register(ingestRoutes, {
+    prefix: '/in',
+    db,
+    wakeWorker,
+    secretBox,
+    limits,
+    counters,
+    storageGuard,
+  });
 
   return app;
 }

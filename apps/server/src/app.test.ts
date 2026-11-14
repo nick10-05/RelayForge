@@ -44,7 +44,7 @@ describe('health endpoints', () => {
     const response = await up.inject({
       method: 'POST',
       url: '/api/v1/auth/login',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3000' },
       payload: '{not json',
     });
     expect(response.statusCode).toBe(400);
