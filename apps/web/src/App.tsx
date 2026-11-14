@@ -1,10 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
-import { Link, Navigate, Route, Routes, useNavigate, useParams } from 'react-router';
+import { Link, Navigate, Route, Routes, useNavigate } from 'react-router';
 import { get } from './api.ts';
 import { RequireAuth, useLogout, useMe } from './auth.tsx';
 import { Badge, Button, Spinner } from './components/ui.tsx';
 import { EndpointDetailPage } from './pages/EndpointDetail.tsx';
 import { EndpointsPage } from './pages/Endpoints.tsx';
+import { EventDetailPage } from './pages/EventDetail.tsx';
+import { EventsPage } from './pages/Events.tsx';
 import { LoginPage } from './pages/Login.tsx';
 
 function HealthBadge() {
@@ -69,20 +71,6 @@ function Home() {
   );
 }
 
-// Feature 3 (event list + event detail) replaces this.
-function EventsPlaceholder() {
-  const { endpointId = '' } = useParams();
-  return (
-    <section className="space-y-2">
-      <Link to={`/endpoints/${endpointId}`} className="text-sm text-slate-500 hover:underline">
-        ← Endpoint
-      </Link>
-      <h1 className="text-2xl font-semibold">Events</h1>
-      <p className="text-sm text-slate-600">The event list is coming next.</p>
-    </section>
-  );
-}
-
 function NotFound() {
   return (
     <section className="space-y-2">
@@ -133,7 +121,15 @@ export function App() {
             path="/endpoints/:endpointId/events"
             element={
               <RequireAuth>
-                <EventsPlaceholder />
+                <EventsPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/events/:eventId"
+            element={
+              <RequireAuth>
+                <EventDetailPage />
               </RequireAuth>
             }
           />

@@ -1,9 +1,9 @@
-import { and, asc, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { currentUser, requireUser } from '../auth/guard.ts';
 import type { Db } from '../db/client.ts';
-import { deliveries, endpoints, events } from '../db/schema.ts';
+import { deliveries, deliveryAttempts, destinations, endpoints, events } from '../db/schema.ts';
 import { NOT_FOUND, validationError } from '../http/errors.ts';
 
 type Cursor = { receivedAt: Date; id: string };
@@ -123,6 +123,7 @@ export const eventRoutes: FastifyPluginAsyncZod<{ db: Db }> = async (app, { db }
         .select({
           id: deliveries.id,
           destinationId: deliveries.destinationId,
+          destinationUrl: destinations.url,
           status: deliveries.status,
           deadReason: deliveries.deadReason,
           trigger: deliveries.trigger,
@@ -136,8 +137,40 @@ export const eventRoutes: FastifyPluginAsyncZod<{ db: Db }> = async (app, { db }
           completedAt: deliveries.completedAt,
         })
         .from(deliveries)
+        .innerJoin(destinations, eq(destinations.id, deliveries.destinationId))
         .where(eq(deliveries.eventId, event.id))
         .orderBy(asc(deliveries.createdAt), asc(deliveries.id));
+
+      // The attempt timeline, in one query for all deliveries (bounded: max_attempts ≤ 15
+      // per delivery). The worker id is an internal detail and stays out of the response.
+      const attempts = eventDeliveries.length
+        ? await db
+            .select({
+              deliveryId: deliveryAttempts.deliveryId,
+              attemptNo: deliveryAttempts.attemptNo,
+              startedAt: deliveryAttempts.startedAt,
+              durationMs: deliveryAttempts.durationMs,
+              statusCode: deliveryAttempts.statusCode,
+              responseHeaders: deliveryAttempts.responseHeaders,
+              responseBodySnippet: deliveryAttempts.responseBodySnippet,
+              errorCode: deliveryAttempts.errorCode,
+              errorMessage: deliveryAttempts.errorMessage,
+            })
+            .from(deliveryAttempts)
+            .where(
+              inArray(
+                deliveryAttempts.deliveryId,
+                eventDeliveries.map((d) => d.id),
+              ),
+            )
+            .orderBy(asc(deliveryAttempts.attemptNo), asc(deliveryAttempts.startedAt))
+        : [];
+      const attemptsByDelivery = new Map<string, Omit<(typeof attempts)[number], 'deliveryId'>[]>();
+      for (const { deliveryId, ...attempt } of attempts) {
+        const list = attemptsByDelivery.get(deliveryId) ?? [];
+        list.push(attempt);
+        attemptsByDelivery.set(deliveryId, list);
+      }
 
       return {
         event: {
@@ -158,7 +191,10 @@ export const eventRoutes: FastifyPluginAsyncZod<{ db: Db }> = async (app, { db }
           signatureStatus: event.signatureStatus,
           signatureFailureReason: event.signatureFailureReason,
           receivedAt: event.receivedAt,
-          deliveries: eventDeliveries,
+          deliveries: eventDeliveries.map((d) => ({
+            ...d,
+            attempts: attemptsByDelivery.get(d.id) ?? [],
+          })),
         },
       };
     },

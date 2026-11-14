@@ -1,4 +1,6 @@
+import { eq } from 'drizzle-orm';
 import { afterAll, describe, expect, test } from 'vitest';
+import { deliveries, deliveryAttempts } from '../db/schema.ts';
 import { createDestination, createEndpoint, createTestApp, signUp } from '../testing/helpers.ts';
 import type { TestUser } from '../testing/helpers.ts';
 import { decodeCursor, encodeCursor } from './routes.ts';
@@ -8,7 +10,7 @@ type Page = { events: Summary[]; nextCursor: string | null };
 
 describe('events API', () => {
   const t = createTestApp();
-  const { app } = t;
+  const { app, db } = t;
   afterAll(() => t.close());
 
   const get = (user: TestUser, url: string) =>
@@ -86,6 +88,78 @@ describe('events API', () => {
       deliveries: [{ destinationId: destination.id, status: 'pending', attemptCount: 0 }],
     });
     expect((event['headers'] as Record<string, string>)['content-type']).toBe('application/json');
+  });
+
+  test('detail includes each delivery’s destination URL and attempt history, oldest first', async () => {
+    const user = await signUp(app);
+    const endpoint = await createEndpoint(app, user);
+    await createDestination(app, user, endpoint.id); // https://example.com/hook
+    const id = await ingest(endpoint.slug, '{}');
+    const [delivery] = await db.select().from(deliveries).where(eq(deliveries.eventId, id));
+    const started = new Date('2026-01-01T10:00:00Z');
+    // Inserted out of order on purpose.
+    await db.insert(deliveryAttempts).values([
+      {
+        deliveryId: delivery!.id,
+        attemptNo: 2,
+        workerId: 'w1',
+        startedAt: new Date(started.getTime() + 30_000),
+        durationMs: 40,
+        statusCode: 200,
+        responseBodySnippet: 'ok',
+      },
+      {
+        deliveryId: delivery!.id,
+        attemptNo: 1,
+        workerId: 'w1',
+        startedAt: started,
+        durationMs: 5000,
+        errorCode: 'TIMEOUT',
+        errorMessage: 'Destination did not answer in time',
+      },
+    ]);
+
+    const response = await get(user, `/api/v1/events/${id}`);
+    const { event } = response.json<{
+      event: { deliveries: { destinationUrl: string; attempts: Record<string, unknown>[] }[] };
+    }>();
+    const [d] = event.deliveries;
+    expect(d!.destinationUrl).toBe('https://example.com/hook');
+    expect(event.deliveries).toHaveLength(1);
+    expect(d!.attempts).toEqual([
+      {
+        attemptNo: 1,
+        startedAt: started.toISOString(),
+        durationMs: 5000,
+        statusCode: null,
+        responseHeaders: null,
+        responseBodySnippet: null,
+        errorCode: 'TIMEOUT',
+        errorMessage: 'Destination did not answer in time',
+      },
+      {
+        attemptNo: 2,
+        startedAt: new Date(started.getTime() + 30_000).toISOString(),
+        durationMs: 40,
+        statusCode: 200,
+        responseHeaders: null,
+        responseBodySnippet: 'ok',
+        errorCode: null,
+        errorMessage: null,
+      },
+    ]);
+    expect(d!.attempts[0]).not.toHaveProperty('workerId'); // internal detail stays internal
+  });
+
+  test('a delivery without attempts yet has an empty history', async () => {
+    const user = await signUp(app);
+    const endpoint = await createEndpoint(app, user);
+    await createDestination(app, user, endpoint.id);
+    const id = await ingest(endpoint.slug, '{}');
+    const { event } = (await get(user, `/api/v1/events/${id}`)).json<{
+      event: { deliveries: { attempts: unknown[] }[] };
+    }>();
+    expect(event.deliveries[0]!.attempts).toEqual([]);
   });
 
   test('binary bodies are base64 in detail and exact via the raw body download', async () => {
