@@ -1,0 +1,5 @@
+package-lock.json
+# Hand-written docs: Prettier pads Markdown tables with long runs of spaces, which hurts raw readability.
+*.md
+coverage/
+dist/
