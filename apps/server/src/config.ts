@@ -42,6 +42,10 @@ const configSchema = z.object({
     .int()
     .min(1_000_000)
     .default(512 * 1024 * 1024),
+  // Proxies in front of this process (the host's load balancer). The client IP for rate limits
+  // and source_ip is then taken from X-Forwarded-For, counting this many hops from the right —
+  // entries further left are client-written and never trusted. 0 = use the socket address.
+  TRUST_PROXY: z.coerce.number().int().min(0).max(5).default(0),
 });
 
 function isOrigin(value: string): boolean {

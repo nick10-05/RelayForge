@@ -47,3 +47,42 @@ describe('chaos receiver', () => {
     ).rejects.toThrow();
   });
 });
+
+// Limits for running the receiver publicly (the demo service): bounded memory and sockets.
+describe('chaos receiver — public mode limits', () => {
+  test('request bodies over the cap get 413 and are not stored', async () => {
+    const chaos = await startChaosReceiver(0, { maxBodyBytes: 1024 });
+    try {
+      const small = await fetch(`${chaos.url}/ok`, { method: 'POST', body: 'x'.repeat(1024) });
+      expect(small.status).toBe(200);
+      const big = await fetch(`${chaos.url}/ok`, { method: 'POST', body: 'x'.repeat(1025) });
+      expect(big.status).toBe(413);
+      expect(chaos.requests).toHaveLength(1);
+    } finally {
+      await chaos.close();
+    }
+  });
+
+  test('keeps only the most recent maxRequests requests', async () => {
+    const chaos = await startChaosReceiver(0, { maxRequests: 3 });
+    try {
+      for (let i = 0; i < 5; i++) await fetch(`${chaos.url}/ok?n=${i}`, { method: 'POST' });
+      expect(chaos.requests).toHaveLength(3);
+      expect(chaos.total()).toBe(5);
+    } finally {
+      await chaos.close();
+    }
+  });
+
+  test('/hang gives up after hangMs instead of holding the socket forever', async () => {
+    const chaos = await startChaosReceiver(0, { hangMs: 100 });
+    try {
+      const started = Date.now();
+      const response = await fetch(`${chaos.url}/hang`, { method: 'POST' });
+      expect(response.status).toBe(504);
+      expect(Date.now() - started).toBeGreaterThanOrEqual(90);
+    } finally {
+      await chaos.close();
+    }
+  });
+});

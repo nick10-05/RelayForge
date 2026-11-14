@@ -1,13 +1,18 @@
 **/node_modules
+**/dist
 **/*.test.ts
+# Test helpers stay out of the image, except the chaos receiver (the public demo service).
 apps/server/src/testing
+!apps/server/src/testing/chaos-receiver.ts
+!apps/server/src/testing/chaos-cli.ts
 .git
 .github
 .vscode
+.claude
 .env
 .env.*
 coverage
-dist
 docs
 docker
+load
 *.md

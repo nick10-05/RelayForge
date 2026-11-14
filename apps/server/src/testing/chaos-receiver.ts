@@ -11,6 +11,9 @@
 //   /binary                200 with NUL bytes in the body
 //   /flaky/:n              500 for the first n requests per delivery, then 200
 //                          (keyed by X-RelayForge-Delivery-Id, else the path)
+//
+// Options bound memory and sockets when it runs publicly (chaos-cli.ts, the demo service);
+// tests use the defaults (unbounded, /hang forever).
 import { createServer } from 'node:http';
 import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
 import type { AddressInfo, Socket } from 'node:net';
@@ -28,20 +31,54 @@ export type ChaosReceiver = {
   requests: ReceivedRequest[];
   /** Requests whose path starts with `prefix`. */
   requestsTo: (prefix: string) => ReceivedRequest[];
+  /** Requests received since start/reset, including ones dropped by maxRequests. */
+  total: () => number;
   reset: () => void;
   close: () => Promise<void>;
 };
 
-export async function startChaosReceiver(port = 0): Promise<ChaosReceiver> {
+export type ChaosOptions = {
+  /** Interface to bind (default 127.0.0.1; 0.0.0.0 in a container). */
+  host?: string;
+  /** Larger request bodies get 413 and aren't stored. Default: unlimited. */
+  maxBodyBytes?: number;
+  /** Keep only the most recent N requests in memory. Default: all. */
+  maxRequests?: number;
+  /** /hang answers 504 after this long instead of never. Default: never. */
+  hangMs?: number;
+};
+
+export async function startChaosReceiver(
+  port = 0,
+  { host = '127.0.0.1', maxBodyBytes, maxRequests, hangMs }: ChaosOptions = {},
+): Promise<ChaosReceiver> {
   const requests: ReceivedRequest[] = [];
+  let total = 0;
   const flakyCounts = new Map<string, number>();
   const sockets = new Set<Socket>();
 
   const server = createServer((req, res) => {
     const chunks: Buffer[] = [];
-    req.on('data', (chunk: Buffer) => chunks.push(chunk));
+    let size = 0;
+    let tooLarge = false;
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (maxBodyBytes !== undefined && size > maxBodyBytes) {
+        tooLarge = true; // stop buffering; keep reading so the 413 can be sent cleanly
+        chunks.length = 0;
+        return;
+      }
+      chunks.push(chunk);
+    });
     req.on('end', () => {
+      if (tooLarge) {
+        res.writeHead(413, { 'content-type': 'text/plain', connection: 'close' });
+        res.end('chaos:413');
+        return;
+      }
       const path = (req.url ?? '/').split('?')[0] ?? '/';
+      total++;
+      if (maxRequests !== undefined && requests.length >= maxRequests) requests.shift();
       requests.push({
         method: req.method ?? 'GET',
         path,
@@ -70,7 +107,8 @@ export async function startChaosReceiver(port = 0): Promise<ChaosReceiver> {
         setTimeout(() => send(200), Number(arg) || 100);
         return;
       case 'hang':
-        return; // never respond
+        if (hangMs !== undefined) setTimeout(() => send(504), hangMs);
+        return; // otherwise never respond
       case 'reset':
         res.socket?.destroy();
         return;
@@ -107,15 +145,17 @@ export async function startChaosReceiver(port = 0): Promise<ChaosReceiver> {
     socket.on('close', () => sockets.delete(socket));
   });
 
-  await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve));
+  await new Promise<void>((resolve) => server.listen(port, host, resolve));
   const address = server.address() as AddressInfo;
 
   return {
     url: `http://127.0.0.1:${address.port}`,
+    total: () => total,
     requests,
     requestsTo: (prefix) => requests.filter((r) => r.path.startsWith(prefix)),
     reset: () => {
       requests.length = 0;
+      total = 0;
       flakyCounts.clear();
     },
     close: async () => {

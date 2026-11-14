@@ -73,6 +73,7 @@ export type AppDeps = {
         | 'INGEST_RATE_PER_SECOND'
         | 'INGEST_BURST'
         | 'INVALID_SIGNATURE_PER_MINUTE'
+        | 'TRUST_PROXY'
       >
     >;
   pool: pg.Pool;
@@ -124,6 +125,9 @@ export function buildApp({
     },
     // Each request gets an id in the logs; honour an incoming one for tracing across hops.
     requestIdHeader: 'x-request-id',
+    // Trust exactly TRUST_PROXY hops (hop 0 = the socket peer). Never `true`, which would trust
+    // the leftmost X-Forwarded-For entry — the one the client writes.
+    trustProxy: (_address: string, hop: number) => hop < (config.TRUST_PROXY ?? 0),
   });
 
   app.setValidatorCompiler(validatorCompiler);

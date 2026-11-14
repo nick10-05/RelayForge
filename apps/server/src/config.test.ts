@@ -35,6 +35,7 @@ describe('loadConfig', () => {
       INGEST_BURST: 100,
       INVALID_SIGNATURE_PER_MINUTE: 10,
       STORAGE_CAP_BYTES: 512 * 1024 * 1024,
+      TRUST_PROXY: 0,
     });
   });
 
@@ -132,6 +133,13 @@ describe('loadConfig', () => {
 
     const wrongActive = errorOf(() => loadConfig({ ...BASE, ENCRYPTION_ACTIVE_KEY_ID: 'k2' }));
     expect(wrongActive.issues[0]).toMatch(/ACTIVE_KEY_ID must name a key/);
+  });
+
+  test('TRUST_PROXY: number of proxy hops, 0 by default, bounded', () => {
+    expect(loadConfig({ ...BASE, TRUST_PROXY: '1' }).TRUST_PROXY).toBe(1);
+    expect(() => loadConfig({ ...BASE, TRUST_PROXY: 'true' })).toThrow(/TRUST_PROXY/);
+    expect(() => loadConfig({ ...BASE, TRUST_PROXY: '-1' })).toThrow(/TRUST_PROXY/);
+    expect(() => loadConfig({ ...BASE, TRUST_PROXY: '10' })).toThrow(/TRUST_PROXY/);
   });
 
   test('APP_ORIGIN: origins only, required in production', () => {
