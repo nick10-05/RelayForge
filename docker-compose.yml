@@ -1,0 +1,24 @@
+# Local development database only. Production uses Neon (Postgres 17).
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      # Local throwaway credentials, reachable only from this machine (see ports).
+      POSTGRES_USER: relayforge
+      POSTGRES_PASSWORD: relayforge
+      POSTGRES_DB: relayforge_dev
+    ports:
+      # Bind to localhost only, so the database isn't exposed on the network.
+      # Host port 5433 (not 5432) so it can run alongside other local Postgres containers.
+      - '127.0.0.1:5433:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U relayforge -d relayforge_dev']
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  pgdata:
