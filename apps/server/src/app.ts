@@ -18,6 +18,7 @@ import { DEV_ORIGINS, createOriginCheck, parseOrigins } from './http/csrf.ts';
 import { registerErrorHandling } from './http/errors.ts';
 import { createIngestCounters, createLimits } from './http/limits.ts';
 import type { IngestCounters, Limits } from './http/limits.ts';
+import { isSpaPage, sendSpaIndex, spaRoutes } from './http/spa.ts';
 import { ingestRoutes } from './ingest/routes.ts';
 import type { Config } from './config.ts';
 import type { ResolveFn } from './delivery/ssrf.ts';
@@ -90,6 +91,8 @@ export type AppDeps = {
   counters?: IngestCounters;
   /** Database size guard for ingest (503 when nearly full). None = never blocks. */
   storageGuard?: Pick<StorageGuard, 'blocked'>;
+  /** Built dashboard to serve (apps/web/dist). None = API only. */
+  webRoot?: string;
 };
 
 export function buildApp({
@@ -103,6 +106,7 @@ export function buildApp({
   limits: limitOverrides = {},
   counters = createIngestCounters(),
   storageGuard = { blocked: () => false },
+  webRoot,
 }: AppDeps): FastifyInstance {
   const limits: Limits = {
     ...createLimits({
@@ -124,12 +128,15 @@ export function buildApp({
 
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
-  registerErrorHandling(app);
+  registerErrorHandling(
+    app,
+    webRoot ? (request, reply) => isSpaPage(request) && sendSpaIndex(reply) : undefined,
+  );
   app.decorateRequest('user', null);
   app.decorateRequest('authMethod', null);
   void app.register(cookie);
   // Security headers. The CSP defaults (default-src 'self', no inline scripts, no framing)
-  // already fit the same-origin SPA served from this process (Day 10).
+  // already fit the same-origin SPA served from this process (http/spa.ts).
   void app.register(helmet);
   app.addHook('onRequest', createOriginCheck(parseOrigins(config.APP_ORIGIN ?? DEV_ORIGINS)));
 
@@ -178,6 +185,7 @@ export function buildApp({
     counters,
     storageGuard,
   });
+  if (webRoot) void app.register(spaRoutes, { root: webRoot });
 
   return app;
 }

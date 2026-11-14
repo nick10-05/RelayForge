@@ -1,4 +1,6 @@
 // Process entry point: config → pool → app + delivery worker → listen, plus signal handling.
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { buildApp } from './app.ts';
 import { ConfigError, loadConfig } from './config.ts';
 import { createAesGcmBox, parseKeyring } from './crypto/secret-box.ts';
@@ -38,7 +40,18 @@ const storageGuard = createStorageGuard({
   capBytes: config.STORAGE_CAP_BYTES,
   onError: (err) => warn({ err }, 'storage size check failed'),
 });
-const app = buildApp({ config, pool, db, secretBox, storageGuard, wakeWorker: () => wake() });
+// The built dashboard (npm run build), if present: served on the same origin as the API.
+const webDist = fileURLToPath(new URL('../../web/dist', import.meta.url));
+const webRoot = existsSync(webDist) ? webDist : undefined;
+const app = buildApp({
+  config,
+  pool,
+  db,
+  secretBox,
+  storageGuard,
+  wakeWorker: () => wake(),
+  ...(webRoot && { webRoot }),
+});
 warn = (obj, msg) => app.log.warn(obj, msg);
 const retention = createRetentionJob({ db, log: app.log.child({ component: 'retention' }) });
 const worker = createScheduler({

@@ -1,5 +1,6 @@
 // @ts-check
 import js from '@eslint/js';
+import reactHooks from 'eslint-plugin-react-hooks';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
@@ -17,7 +18,7 @@ export default tseslint.config(
 
   // TypeScript files: recommended + type-aware rules (need type information from tsconfig).
   {
-    files: ['**/*.ts'],
+    files: ['**/*.ts', '**/*.tsx'],
     extends: [tseslint.configs.recommendedTypeChecked],
     languageOptions: {
       parserOptions: {
@@ -35,5 +36,11 @@ export default tseslint.config(
       // Fastify plugins and handlers are async by contract, even when they don't await.
       '@typescript-eslint/require-await': 'off',
     },
+  },
+
+  // Dashboard: the rules of hooks (call order, effect dependencies).
+  {
+    files: ['apps/web/src/**/*.tsx', 'apps/web/src/**/*.ts'],
+    extends: [reactHooks.configs.flat.recommended],
   },
 );

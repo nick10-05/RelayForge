@@ -23,7 +23,7 @@ const unlimited = () => createRateLimiter({ capacity: 1e9, refillPerSecond: 1e9 
 
 export function createTestApp(
   config: Partial<AppDeps['config']> = {},
-  extra: Pick<AppDeps, 'logStream' | 'limits' | 'counters' | 'storageGuard'> & {
+  extra: Pick<AppDeps, 'logStream' | 'limits' | 'counters' | 'storageGuard' | 'webRoot'> & {
     /** Don't add the Origin header automatically (CSRF tests). */
     noOrigin?: boolean;
   } = {},

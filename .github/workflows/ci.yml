@@ -44,5 +44,8 @@ jobs:
 
       - run: npm run check
 
+      - name: Dashboard builds
+        run: npm run build
+
       - name: Docker image builds
         run: docker build -t relayforge:ci .

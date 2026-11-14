@@ -20,7 +20,9 @@ export const CSRF_REFUSED = {
   message: 'Cross-origin request refused',
 } as const;
 
-export const DEV_ORIGINS = 'http://localhost:3000,http://127.0.0.1:3000';
+// The API's own port (built dashboard) and Vite's dev server (npm run dev:web).
+export const DEV_ORIGINS =
+  'http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173';
 
 export function parseOrigins(value: string): Set<string> {
   return new Set(
