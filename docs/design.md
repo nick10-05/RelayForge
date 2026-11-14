@@ -230,7 +230,7 @@ delivery_attempts (id, delivery_id, attempt_no, worker_id, started_at, duration_
                    status_code, response_headers JSONB, response_body_snippet,
                    error_code, error_message)
 ```
-- IDs: UUIDv7, generated in the app (Postgres 17 has no built-in `uuidv7()`).
+- IDs: UUIDv7, generated in the app (so ids are known before the insert and do not depend on the Postgres version).
 - Cascading deletes from events. `max_attempts` snapshotted per delivery.
 
 ## 7. Security design
@@ -368,7 +368,7 @@ Scope is unchanged from §2. The 10-day target works because **quality work happ
 | D6 | Way of working | Small daily milestones; tests written alongside each feature; `npm run check` before every commit |
 | D7 | Schedule | 10-working-day target, not a hard deadline (realistic 10–12); slip goes to polish (M4/M5/M6), never to the engine, security or tests (§11) |
 
-Resolved in M0: **Postgres 17** on Neon and locally (Neon supports 14–18); UUIDv7 ids generated in the app.
+Resolved in M0: **Postgres 17** on Neon and locally (Neon supports 14–18). Changed on Day 10 to **Postgres 18** (the Neon project was created on 18; local and CI follow); UUIDv7 ids generated in the app.
 
 ## 13. Changelog
 

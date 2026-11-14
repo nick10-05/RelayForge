@@ -6,14 +6,14 @@ One Docker image runs everything (design §3, §10):
   migrations, then serves. Port 3000.
 - **`chaos`** service (optional, the second Sandbox service): the same image with another start
   command — a public, deliberately unreliable receiver for demos. Port 8080.
-- **Neon** Postgres 17: the app uses the **pooled** URL, migrations the **direct** URL.
+- **Neon** Postgres 18: the app uses the **pooled** URL, migrations the **direct** URL.
 
 Secrets (database URLs, encryption key) go only into Northflank's secret settings — never into
 the repo, an issue, or a chat.
 
 ## 1. Neon
 
-1. Create a project: **Postgres 17**, region close to your Northflank region (same continent,
+1. Create a project: **Postgres 18**, region close to your Northflank region (same continent,
    ideally the same cloud region).
 2. Dashboard → **Connect**: copy two connection strings for the default database:
    - **Pooled** (host contains `-pooler`) → `DATABASE_URL`
