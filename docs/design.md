@@ -362,7 +362,7 @@ Scope is unchanged from §2. The 10-day target works because **quality work happ
 |---|---|---|
 | D1 | Runtime | Node.js 24 LTS (`>=24.15`), built-in type stripping; Node 26 is a later, optional upgrade (revised in v2.3) |
 | D2 | Code location | Local Windows dev (VS Code); GitHub repo `relayforge` |
-| D3 | Hosting | No credit card: Northflank Sandbox if signup needs no card, else Render Free; Neon for the database |
+| D3 | Hosting | No credit card: Northflank Sandbox if signup needs no card, else Render Free; Neon for the database. **Day 10: Northflank sign-in could not be completed → Render Free (Singapore) + Neon (Singapore)**; free-tier trade-offs in `docs/deploy.md` |
 | D4 | Defaults | 7-day retention, 1 MB body cap, 10 attempts with exponential backoff + full jitter (base 30 s, cap 1 h) |
 | D5 | Invalid signatures | Store event + validation metadata, never forward; bounded by 64 KB body, stricter rate limit, 24 h retention, no dedupe entry, no replay (§7.2) |
 | D6 | Way of working | Small daily milestones; tests written alongside each feature; `npm run check` before every commit |
