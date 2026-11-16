@@ -11,6 +11,14 @@ const ENGINE_TESTS = [
 export default defineConfig({
   test: {
     globalSetup: ['./apps/server/src/testing/global-setup.ts'],
+    // `npm run test:coverage`: server code only (the dashboard has no tests beyond pure helpers),
+    // without the test files and test harness themselves.
+    coverage: {
+      provider: 'v8',
+      include: ['apps/server/src/**/*.ts'],
+      exclude: ['**/*.test.ts', 'apps/server/src/testing/**', 'apps/server/src/**/*-cli.ts'],
+      reporter: ['text-summary', 'text', 'html'],
+    },
     projects: [
       {
         // API and unit tests: isolated by data (fresh user per test), files run in parallel.

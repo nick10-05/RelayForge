@@ -79,6 +79,26 @@ describe('createShutdown', () => {
     }
   });
 
+  test('exits 1 (and logs) when closing fails', async () => {
+    const lines: string[] = [];
+    const pool = createPool(TEST_DATABASE_URL);
+    const app = buildApp({
+      config: { LOG_LEVEL: 'error', NODE_ENV: 'test' },
+      pool,
+      db: createDb(pool),
+      logStream: { write: (line) => void lines.push(line) },
+    });
+    app.close = (() => Promise.reject(new Error('close failed'))) as unknown as typeof app.close;
+    const exit = vi.fn();
+
+    await createShutdown({ app, pool, timeoutMs: 5000, exit })('SIGTERM');
+
+    expect(exit).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(lines.join('')).toContain('shutdown failed');
+    await pool.end();
+  });
+
   test('stops the delivery worker (shorter budget) before closing the pool', async () => {
     const pool = createPool(TEST_DATABASE_URL);
     const app = buildApp({

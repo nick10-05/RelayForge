@@ -54,3 +54,35 @@ describe('health endpoints', () => {
     });
   });
 });
+
+describe('unexpected errors', () => {
+  test('a thrown error is a generic 500; details go to the log, not the client', async () => {
+    const lines: string[] = [];
+    const pool = createPool(TEST_DATABASE_URL);
+    const app = buildApp({
+      config: { LOG_LEVEL: 'error', NODE_ENV: 'test' },
+      pool,
+      db: createDb(pool),
+      logStream: { write: (line) => void lines.push(line) },
+    });
+    app.get('/boom', () => {
+      throw new Error('internal detail: connect ECONNREFUSED 10.0.0.5:5432');
+    });
+    try {
+      const response = await app.inject({ method: 'GET', url: '/boom' });
+
+      expect(response.statusCode).toBe(500);
+      expect(response.json()).toEqual({
+        error: 'internal_error',
+        message: 'Internal server error',
+      });
+      expect(response.body).not.toContain('10.0.0.5');
+      const logged = lines.join('');
+      expect(logged).toContain('unhandled error');
+      expect(logged).toContain('10.0.0.5'); // the operator still sees it
+    } finally {
+      await app.close();
+      await pool.end();
+    }
+  });
+});

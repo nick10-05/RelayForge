@@ -103,7 +103,7 @@ Backoff is `random(0, min(1 h, 30 s × 2^(attempt−1)))` with **full jitter**, 
 
 ## Tested like it matters
 
-**41 test files** run in CI, and the integration tests use a **real PostgreSQL 18**, not mocks. They include:
+**44 test files (542 tests)** run in CI, and the integration tests use a **real PostgreSQL 18**, not mocks. Server line coverage is **about 95%** (`npm run test:coverage`); what's left is mostly entry points and the real-DNS resolver. They include:
 
 - **Engine invariants** ([`invariants.test.ts`](apps/server/src/delivery/invariants.test.ts)): N concurrent workers send each delivery exactly once; a worker that dies mid-request is recovered after its lease expires; a stale worker cannot overwrite a newer result; a crash-inducing payload ends `dead`; a forged event never causes an outbound request.
 - **Reliability under load** ([`reliability.test.ts`](apps/server/src/delivery/reliability.test.ts)): 4 schedulers × 8 slots, and 12 tight-batch workers racing the claim and the reaper, with no double sends and nothing stuck. Also covers a crash between send and completion.

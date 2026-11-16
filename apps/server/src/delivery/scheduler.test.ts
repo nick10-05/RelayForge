@@ -204,4 +204,30 @@ describe('delivery scheduler', () => {
     const [r] = await ctx.db.select().from(deliveries);
     expect(r).toMatchObject({ status: 'pending', attemptCount: 0 });
   });
+
+  test('a database error in the loop is logged, backed off, and the loop recovers', async () => {
+    const { deliveryIds } = await ctx.seed({ destinationUrl: `${chaos.url}/ok` });
+    const original = ctx.pool.query.bind(ctx.pool);
+    let failures = 0;
+    const spy = vi.spyOn(ctx.pool, 'query') as unknown as {
+      mockImplementation: (fn: (text: unknown, values?: unknown) => Promise<unknown>) => void;
+    };
+    spy.mockImplementation((text, values) => {
+      if (failures === 0) {
+        failures++;
+        return Promise.reject(new Error('connection terminated unexpectedly'));
+      }
+      return original(text as string, values as unknown[]);
+    });
+    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    scheduler({ log }).start();
+
+    await waitFor(async () => (await statusOf(deliveryIds[0]!)) === 'succeeded');
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ retryInMs: 1000 }),
+      'delivery loop error',
+    );
+    expect(chaos.requests).toHaveLength(1);
+  });
 });

@@ -1,4 +1,6 @@
 // Outbound HTTP against the local chaos receiver (no network beyond 127.0.0.1).
+import { createServer as createHttpServer } from 'node:http';
+import type { RequestListener } from 'node:http';
 import { createServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { Webhook } from 'standardwebhooks';
@@ -266,5 +268,62 @@ describe('signed deliveries', () => {
     expect(result.errorCode).toBe('SIGNING_FAILED');
     expect(result.errorMessage).not.toContain('garbage');
     expect(chaos.requests).toHaveLength(before);
+  });
+});
+
+describe('misbehaving receivers (own server per test)', () => {
+  const send = createHttpSender({ production: false, allowPrivate: true, resolve: fakeResolve });
+
+  /** Runs `handler` on a throwaway HTTP server for one request. */
+  async function withServer<T>(handler: RequestListener, run: (url: string) => Promise<T>) {
+    const server = createHttpServer(handler);
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    try {
+      return await run(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((r) => server.close(() => r()));
+    }
+  }
+
+  test('headers arrive but the body never ends → the status counts, not a TIMEOUT', async () => {
+    const result = await withServer(
+      (_req, res) => {
+        res.writeHead(200, { 'content-type': 'text/plain' });
+        res.write('partial'); // ...and never res.end()
+      },
+      (url) => send(makeClaim(url, { timeoutMs: 300 })),
+    );
+    expect(result).toMatchObject({ statusCode: 200, responseBodySnippet: 'partial' });
+    expect(result.errorCode).toBeUndefined();
+  });
+
+  test('response headers are capped: at most 50, each value at most 512 chars', async () => {
+    const result = await withServer(
+      (_req, res) => {
+        // Within Node's 16 KB header limit: long values first so they survive the count cap.
+        res.setHeader('x-long', 'v'.repeat(2000));
+        res.setHeader('set-cookie', ['a'.repeat(2000), 'b']); // the one header Node keeps as an array
+        for (let i = 0; i < 80; i++) res.setHeader(`x-h${i}`, String(i));
+        res.end('ok');
+      },
+      (url) => send(makeClaim(url)),
+    );
+    const headers = result.responseHeaders!;
+    expect(Object.keys(headers)).toHaveLength(50);
+    expect(headers['x-long']).toHaveLength(512);
+    expect(headers['set-cookie']).toEqual(['a'.repeat(512), 'b']);
+  });
+
+  test('a header block over 16 KB is refused as an error (retryable), not buffered', async () => {
+    const result = await withServer(
+      (_req, res) => {
+        for (let i = 0; i < 20; i++) res.setHeader(`x-h${i}`, 'v'.repeat(2000));
+        res.end('ok');
+      },
+      (url) => send(makeClaim(url)),
+    );
+    expect(result.statusCode).toBeUndefined();
+    expect(result.errorCode).toBe('HPE_HEADER_OVERFLOW');
   });
 });

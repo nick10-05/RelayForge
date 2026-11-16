@@ -33,12 +33,16 @@ describe('isBlockedAddress', () => {
     expect(isBlockedAddress(address)).toBe(true);
   });
 
-  test.each(['93.184.216.34', '8.8.8.8', '172.32.0.1', '2606:4700:4700::1111', '::ffff:8.8.8.8'])(
-    'allows %s',
-    (address) => {
-      expect(isBlockedAddress(address)).toBe(false);
-    },
-  );
+  test.each([
+    '93.184.216.34',
+    '8.8.8.8',
+    '172.32.0.1',
+    '2606:4700:4700::1111',
+    '::ffff:8.8.8.8',
+    '::ffff:808:808', // 8.8.8.8 in hex mapped form: unwrapped, then allowed (not over-blocked)
+  ])('allows %s', (address) => {
+    expect(isBlockedAddress(address)).toBe(false);
+  });
 });
 
 describe('resolveAllowed', () => {
