@@ -130,6 +130,15 @@ export const ROUTE_DOCS: Record<string, RouteDoc> = {
     summary: 'Redeliver all dead deliveries of an endpoint',
     description: 'Optionally limited to one destination.',
   },
+
+  'GET /api/v1/stats': {
+    tag: 'Stats',
+    summary: 'Counts and delivery health for your endpoints',
+    description:
+      'Events and deliveries currently retained, the claimable backlog (`due`), dead deliveries ' +
+      'by reason, and the last 24 h of attempts (success rate, p50/p95 latency). Pass ' +
+      '`endpointId` for a single endpoint.',
+  },
 };
 
 /** "METHOD /url" with Fastify's `:param` turned into OpenAPI's `{param}`. */
@@ -208,6 +217,7 @@ export function registerOpenApi(app: FastifyInstance): void {
         { name: 'Destinations' },
         { name: 'Events' },
         { name: 'Redelivery' },
+        { name: 'Stats' },
         { name: 'Health' },
       ],
       components: {

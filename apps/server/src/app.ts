@@ -22,6 +22,7 @@ import type { IngestCounters, Limits } from './http/limits.ts';
 import { registerOpenApi } from './http/openapi.ts';
 import { isSpaPage, sendSpaIndex, spaRoutes } from './http/spa.ts';
 import { ingestRoutes } from './ingest/routes.ts';
+import { statsRoutes } from './stats/routes.ts';
 import type { Config } from './config.ts';
 import type { ResolveFn } from './delivery/ssrf.ts';
 import type { StorageGuard } from './ops/storage-guard.ts';
@@ -189,6 +190,7 @@ export function buildApp({
   });
   void app.register(eventRoutes, { prefix: '/api/v1', db });
   void app.register(redeliveryRoutes, { prefix: '/api/v1', db, wakeWorker });
+  void app.register(statsRoutes, { prefix: '/api/v1', db, counters });
   void app.register(ingestRoutes, {
     prefix: '/in',
     db,

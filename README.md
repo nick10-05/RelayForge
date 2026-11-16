@@ -103,7 +103,7 @@ Backoff is `random(0, min(1 h, 30 s × 2^(attempt−1)))` with **full jitter**, 
 
 ## Tested like it matters
 
-**44 test files (542 tests)** run in CI, and the integration tests use a **real PostgreSQL 18**, not mocks. Server line coverage is **about 95%** (`npm run test:coverage`); what's left is mostly entry points and the real-DNS resolver. They include:
+**45 test files (546 tests)** run in CI, and the integration tests use a **real PostgreSQL 18**, not mocks. Server line coverage is **about 95%** (`npm run test:coverage`); what's left is mostly entry points and the real-DNS resolver. They include:
 
 - **Engine invariants** ([`invariants.test.ts`](apps/server/src/delivery/invariants.test.ts)): N concurrent workers send each delivery exactly once; a worker that dies mid-request is recovered after its lease expires; a stale worker cannot overwrite a newer result; a crash-inducing payload ends `dead`; a forged event never causes an outbound request.
 - **Reliability under load** ([`reliability.test.ts`](apps/server/src/delivery/reliability.test.ts)): 4 schedulers × 8 slots, and 12 tight-batch workers racing the claim and the reaper, with no double sends and nothing stuck. Also covers a crash between send and completion.
@@ -172,10 +172,11 @@ apps/
     ingest/        receive, verify signatures, de-duplicate, store (outbox)
     delivery/      claim, send (SSRF-safe), classify, schedule, sign, complete, redeliver
     auth/          passwords, sessions, API keys, route guards
-    http/          CSRF, limits, hardening, SPA serving
+    http/          CSRF, limits, hardening, log redaction, OpenAPI docs, SPA serving
     ops/           retention job, storage guard
+    stats/         GET /api/v1/stats: counts, backlog, 24 h delivery health
     testing/       chaos receiver, fake DNS, test helpers
   web/src/         React dashboard: endpoints, events, attempt timeline, redeliver
-docs/              design.md, deploy.md
+docs/              design.md, deploy.md, adr/ (decision records)
 load/              k6 ingest load test
 ```
