@@ -9,3 +9,49 @@ export const MIGRATIONS_FOLDER = fileURLToPath(new URL('../../drizzle', import.m
 export async function runMigrations(pool: pg.Pool): Promise<void> {
   await migrate(drizzle({ client: pool }), { migrationsFolder: MIGRATIONS_FOLDER });
 }
+
+/**
+ * Runs `migrateOnce` until it succeeds, waiting `delaysMs[i]` before retry i + 1.
+ * Neon's free compute sleeps when idle; the first connection after a deploy can time out while it
+ * wakes. Each migration runs in its own transaction, so a retry after a failure is safe.
+ */
+export async function migrateWithRetry(
+  migrateOnce: () => Promise<void>,
+  {
+    delaysMs = [2000, 4000, 8000, 16000],
+    log = console.error,
+    sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+  }: {
+    delaysMs?: readonly number[];
+    log?: (message: string) => void;
+    sleep?: (ms: number) => Promise<void>;
+  } = {},
+): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await migrateOnce();
+      return;
+    } catch (error) {
+      const delay = delaysMs[attempt];
+      if (delay === undefined) throw error;
+      log(
+        `migration attempt ${attempt + 1} failed (${describeError(error)}); retrying in ${delay} ms`,
+      );
+      await sleep(delay);
+    }
+  }
+}
+
+/**
+ * One line for logs: the message plus the underlying cause (pg / network error) and its code.
+ * Drizzle wraps driver errors as "Failed query: <sql>" and keeps the real reason in `cause`;
+ * its "params:" part (bound values) is cut off, so no values reach the logs.
+ */
+export function describeError(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  const message = error.message.split('\nparams:')[0] ?? '';
+  const cause = error.cause;
+  if (!(cause instanceof Error)) return message;
+  const code = (cause as { code?: unknown }).code;
+  return `${message}: ${cause.message}${typeof code === 'string' ? ` [${code}]` : ''}`;
+}

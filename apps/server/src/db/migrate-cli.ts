@@ -2,7 +2,7 @@
 // Uses the direct (non-pooled) URL: Neon's pooler is unsafe for DDL sessions.
 import { ConfigError, loadConfig } from '../config.ts';
 import { createPool } from './client.ts';
-import { runMigrations } from './migrate.ts';
+import { describeError, migrateWithRetry, runMigrations } from './migrate.ts';
 
 let url: string;
 try {
@@ -17,10 +17,10 @@ try {
 
 const pool = createPool(url);
 try {
-  await runMigrations(pool);
+  await migrateWithRetry(() => runMigrations(pool));
   console.log('migrations applied');
 } catch (error) {
-  console.error('migration failed:', error instanceof Error ? error.message : error);
+  console.error(`migration failed: ${describeError(error)}`);
   process.exitCode = 1;
 } finally {
   await pool.end();
