@@ -72,8 +72,8 @@ makes the stored signing/verify secrets unreadable. `ENCRYPTION_ACTIVE_KEY_ID` i
    | `DATABASE_DIRECT_URL` | Neon direct URL |
    | `ENCRYPTION_KEYS` | `k1:…` from step 2 |
    | `ENCRYPTION_ACTIVE_KEY_ID` | `k1` |
-   | `APP_ORIGIN` | the service URL, e.g. `https://relayforge.onrender.com` (no trailing slash) |
-   | `TRUST_PROXY` | `1` |
+   | `APP_ORIGIN` | the service URL shown on its page, e.g. `https://relayforge-r0l7.onrender.com` (no trailing slash) |
+   | `TRUST_PROXY` | `3` (measured on Render, see step 5 of the verification) |
    | `LOG_LEVEL` | `info` |
 
    `NODE_ENV=production` and `HOST=0.0.0.0` come from the image. Render sets `PORT` (10000 by
@@ -84,8 +84,11 @@ makes the stored signing/verify secrets unreadable. `ENCRYPTION_ACTIVE_KEY_ID` i
    `delivery worker started`. If the config is wrong, the container exits listing every bad
    variable by name (never its value).
 
-If the URL got a suffix, change `APP_ORIGIN` to match it exactly and save (Render redeploys) —
-until then every dashboard form answers 403 (`csrf_origin_mismatch`).
+**`onrender.com` names are global.** If someone else already has `relayforge`, Render adds a
+random suffix (this deployment is `https://relayforge-r0l7.onrender.com`), and the bare name
+serves someone else's app. Copy the URL from the service page, set `APP_ORIGIN` to exactly that
+(Environment → Edit → Save, rebuild, and deploy) — until then every dashboard form answers 403
+(`csrf_origin_mismatch`).
 
 ## 4. Render: the `relayforge-chaos` service (optional)
 
@@ -112,10 +115,13 @@ retried — a realistic demo of the retry path.
    ```
 4. Open the event: two failed attempts, then a success (retries back off up to ~30 s and
    ~60 s). Retry and replay work from the page.
-5. **Check `TRUST_PROXY`**: the event's *Source IP* must be your public IP. If it shows an
-   internal address (10.x, 172.16–31.x), the platform has one more proxy hop: set
-   `TRUST_PROXY=2` and redeploy. Never set it higher than the real number of proxies — that
-   would let clients spoof their IP and bypass rate limits.
+5. **Check `TRUST_PROXY`**: the event's *Source IP* must be your public IP. Its request headers
+   show the chain. On Render: `x-forwarded-for: <you>, <Cloudflare edge>, <Render LB 10.x>`, and
+   the TCP connection itself comes from one more internal proxy — **3 hops**, so
+   `TRUST_PROXY=3` (with `1`, Source IP shows the 10.x load balancer). The rule: trust exactly as
+   many hops as the platform adds, counted from the right. A client that sends its own fake
+   `X-Forwarded-For` only adds entries on the _left_, so it can't spoof its IP; a value higher
+   than the real hop count would let it, and bypass rate limits.
 
 ### A real webhook (GitHub)
 

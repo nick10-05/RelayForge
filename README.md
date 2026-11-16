@@ -152,6 +152,8 @@ Before every commit: `npm run check` (format, lint, type-check, all tests).
 
 ## Deploy
 
+**Live:** [relayforge-r0l7.onrender.com](https://relayforge-r0l7.onrender.com) (Render Free in Singapore: after 15 idle minutes the first request takes about a minute while the service wakes up).
+
 One Docker image runs the API, the worker and the dashboard, and applies migrations on start. [`docs/deploy.md`](docs/deploy.md) walks through Render Free + Neon step by step, including what the free tier means for delivery timing.
 
 ## Design
