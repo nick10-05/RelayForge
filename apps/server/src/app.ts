@@ -18,6 +18,7 @@ import { DEV_ORIGINS, createOriginCheck, parseOrigins } from './http/csrf.ts';
 import { registerErrorHandling } from './http/errors.ts';
 import { createIngestCounters, createLimits } from './http/limits.ts';
 import type { IngestCounters, Limits } from './http/limits.ts';
+import { registerOpenApi } from './http/openapi.ts';
 import { isSpaPage, sendSpaIndex, spaRoutes } from './http/spa.ts';
 import { ingestRoutes } from './ingest/routes.ts';
 import type { Config } from './config.ts';
@@ -143,6 +144,8 @@ export function buildApp({
   // already fit the same-origin SPA served from this process (http/spa.ts).
   void app.register(helmet);
   app.addHook('onRequest', createOriginCheck(parseOrigins(config.APP_ORIGIN ?? DEV_ORIGINS)));
+  // Before any route: the spec is built from the routes registered after it.
+  registerOpenApi(app);
 
   // Graceful shutdown: once closing, tell clients not to reuse the connection, so
   // keep-alive sockets close after their in-flight response instead of holding shutdown open.
@@ -156,13 +159,16 @@ export function buildApp({
     done(null, payload);
   });
 
-  // Liveness: the process is up. Never touches the database, so pings don't wake Neon.
-  app.get('/healthz', () => ({ status: 'ok' }));
+  // In a plugin (not directly on `app`) so the routes are added after swagger's onRoute hook.
+  void app.register(async (health) => {
+    // Liveness: the process is up. Never touches the database, so pings don't wake Neon.
+    health.get('/healthz', () => ({ status: 'ok' }));
 
-  // Readiness: the database is reachable. Not for keep-alive pings.
-  app.get('/readyz', async (_request, reply) => {
-    const ok = await checkDatabase(pool);
-    return reply.code(ok ? 200 : 503).send({ status: ok ? 'ok' : 'unavailable' });
+    // Readiness: the database is reachable. Not for keep-alive pings.
+    health.get('/readyz', async (_request, reply) => {
+      const ok = await checkDatabase(pool);
+      return reply.code(ok ? 200 : 503).send({ status: ok ? 'ok' : 'unavailable' });
+    });
   });
 
   const production = config.NODE_ENV === 'production';

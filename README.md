@@ -146,6 +146,8 @@ npm run dev:web                 # dashboard (Vite dev server), in a second termi
 
 Before every commit: `npm run check` (format, lint, type-check, all tests).
 
+**API docs:** interactive OpenAPI 3.1 docs at [`/api/v1/docs`](https://relayforge-r0l7.onrender.com/api/v1/docs) (spec at `/api/v1/docs/json`), generated from the same Zod schemas the server validates with.
+
 **A destination that misbehaves on purpose:** `node apps/server/src/testing/chaos-cli.ts 4100` starts the chaos receiver locally. Set `ALLOW_PRIVATE_DESTINATIONS=true` in `.env` to point a destination at it (this is refused in production).
 
 **Load test:** `k6 run load/ingest.js` (see the comments in the file for rate, duration and fan-out options).
