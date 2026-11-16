@@ -4,8 +4,13 @@
 //   k6 run -e DEST_URL=http://127.0.0.1:4100/ok load/ingest.js
 //   k6 run -e RATE=500 -e DURATION=30s -e BASE_URL=http://127.0.0.1:3100 load/ingest.js
 //
-// The server must allow the Origin (APP_ORIGIN) and have ingest limits raised for the run
-// (INGEST_RATE_PER_SECOND / INGEST_BURST), or most requests are 429 by design.
+// Local runs create a throwaway account + endpoint in setup(). The server must allow the Origin
+// (APP_ORIGIN) and have ingest limits raised (INGEST_RATE_PER_SECOND / INGEST_BURST), or most
+// requests are 429 by design.
+//
+// Deployed app: no account is created. Make an endpoint in the dashboard and pass its slug, and
+// stay under the per-endpoint limit (default 20/s, burst 100):
+//   k6 run -e BASE_URL=https://relayforge-r0l7.onrender.com -e SLUG=<slug> -e RATE=10 -e DURATION=60s load/ingest.js
 import http from 'k6/http';
 import { check } from 'k6';
 
@@ -43,6 +48,8 @@ function json(method, path, body, cookie) {
 }
 
 export function setup() {
+  if (__ENV.SLUG) return { slug: __ENV.SLUG }; // existing endpoint (deployed app)
+
   const email = `k6-${Date.now()}@example.test`;
   const signup = json('POST', '/api/v1/auth/signup', { email, password: 'k6-load-test-password' });
   if (signup.status !== 201) throw new Error(`signup failed: ${signup.status} ${signup.body}`);

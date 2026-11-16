@@ -21,7 +21,7 @@ the repo, an issue, or a chat.
 | **750** free instance hours per workspace per month | One service awake all month is ~744 h, so two services fit only because both sleep when idle |
 | **5 GB** outbound bandwidth per month (includes traffic to Neon and to destinations) | Ample for a demo. Without a card, going over suspends the free services until next month — no bill |
 | **500** build minutes per month | A build takes a few minutes; auto-deploy on every push to `main` is fine |
-| 0.1 CPU, 512 MB RAM, one instance, no shell, no persistent disk | Fine: the app is stateless (everything is in Postgres). The k6 numbers in the README were measured locally, not here |
+| 0.1 CPU, 512 MB RAM, one instance, no shell, no persistent disk | Fine: the app is stateless (everything is in Postgres). The k6 numbers in the README were measured locally, not here (0.1 CPU and the 20 req/s per-endpoint limit would only measure the free tier) |
 | **No pre-deploy command** on free services | Migrations already run in the image's start command, so nothing changes |
 | Render may restart a free service at any time | Safe: SIGTERM drains in-flight work (10 s); a delivery cut off mid-send is retried after its lease expires (at-least-once) |
 

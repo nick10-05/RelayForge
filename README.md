@@ -112,6 +112,21 @@ Backoff is `random(0, min(1 h, 30 s × 2^(attempt−1)))` with **full jitter**, 
 
 Every push runs format check → lint → type-check → tests → dashboard build → Docker image build.
 
+### Load numbers (measured locally)
+
+One Node process (API + worker, delivery concurrency 8) and Postgres 18 in Docker on a Windows laptop, k6 at a **constant arrival rate** ([`load/ingest.js`](load/ingest.js)), destination = the local chaos receiver. Measured 16 Nov 2026 unless marked.
+
+| Scenario | Result |
+|---|---|
+| Ingest only, 200 req/s × 30 s | 6,000/6,000 accepted (`202`), 0 errors · latency p50 6.9 ms, p95 10.2 ms, p99 21.9 ms |
+| Ingest + 1 destination, 200 req/s × 30 s | ingest p95 19 ms · **6,001/6,001 delivered, all on the first attempt** · received → delivered p50 29 ms, p95 46 ms, max 91 ms |
+| Ingest + 1 destination, 500 req/s × 30 s | 14,946 accepted, 0 errors, ingest p95 118 ms · the worker drains ≈ 210–260/s, so a backlog builds and clears ~40 s after the run · all 14,946 delivered on the first attempt |
+| Server killed mid-run (14 Nov) | 38,260/38,260 delivered · 5 retried after their lease expired · 1 duplicate request at the receiver (at-least-once), 0 duplicate delivery rows |
+
+**Where it tops out:** ingest ≈ 665 req/s; delivery is the bottleneck, because every attempt opens a fresh TCP/TLS connection (deliberate: the socket must connect to the address the SSRF guard just vetted) and records its result in a transaction. Raising worker concurrency to 32 gave ≈ 440/s (14 Nov).
+
+**Why not on the live site:** Render Free has 0.1 CPU and the per-endpoint ingest limit is 20 req/s by design, so a load test there would measure the free tier and the rate limiter, not the engine.
+
 ## Tech stack
 
 | Layer | Choice |
