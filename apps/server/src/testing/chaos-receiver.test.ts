@@ -40,6 +40,13 @@ describe('chaos receiver', () => {
     expect((await post('/flaky/2', { 'x-relayforge-delivery-id': 'd2' })).status).toBe(500);
   });
 
+  test('busy answers 429 + Retry-After n times per delivery id, then succeeds', async () => {
+    const first = await post('/busy/1', { 'x-relayforge-delivery-id': 'b1' });
+    expect(first.status).toBe(429);
+    expect(first.headers.get('retry-after')).toBe('1');
+    expect((await post('/busy/1', { 'x-relayforge-delivery-id': 'b1' })).status).toBe(200);
+  });
+
   test('reset destroys the connection; hang never answers', async () => {
     await expect(post('/reset')).rejects.toThrow();
     await expect(

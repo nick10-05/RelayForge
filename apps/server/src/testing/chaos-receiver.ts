@@ -11,6 +11,8 @@
 //   /binary                200 with NUL bytes in the body
 //   /flaky/:n              500 for the first n requests per delivery, then 200
 //                          (keyed by X-RelayForge-Delivery-Id, else the path)
+//   /busy/:n               like flaky, but 429 + Retry-After: 1 (a rate-limited receiver;
+//                          RelayForge honours the header, so retries come ~1 s apart)
 //
 // Options bound memory and sockets when it runs publicly (chaos-cli.ts, the demo service);
 // tests use the defaults (unbounded, /hang forever).
@@ -127,13 +129,15 @@ export async function startChaosReceiver(
         res.end(body);
         return;
       }
-      case 'flaky': {
+      case 'flaky':
+      case 'busy': {
         const failures = Number(arg) || 1;
         const keyHeader = headers['x-relayforge-delivery-id'];
         const key = typeof keyHeader === 'string' ? keyHeader : path;
         const seen = flakyCounts.get(key) ?? 0;
         flakyCounts.set(key, seen + 1);
-        return send(seen < failures ? 500 : 200);
+        if (seen >= failures) return send(200);
+        return mode === 'busy' ? send(429, { 'retry-after': '1' }) : send(500);
       }
       default:
         return send(404);

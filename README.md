@@ -103,7 +103,7 @@ Backoff is `random(0, min(1 h, 30 s × 2^(attempt−1)))` with **full jitter**, 
 
 ## Tested like it matters
 
-**45 test files (546 tests)** run in CI, and the integration tests use a **real PostgreSQL 18**, not mocks. Server line coverage is **about 95%** (`npm run test:coverage`); what's left is mostly entry points and the real-DNS resolver. They include:
+**45 test files (547 tests)** run in CI, and the integration tests use a **real PostgreSQL 18**, not mocks. Server line coverage is **about 95%** (`npm run test:coverage`); what's left is mostly entry points and the real-DNS resolver. They include:
 
 - **Engine invariants** ([`invariants.test.ts`](apps/server/src/delivery/invariants.test.ts)): N concurrent workers send each delivery exactly once; a worker that dies mid-request is recovered after its lease expires; a stale worker cannot overwrite a newer result; a crash-inducing payload ends `dead`; a forged event never causes an outbound request.
 - **Reliability under load** ([`reliability.test.ts`](apps/server/src/delivery/reliability.test.ts)): 4 schedulers × 8 slots, and 12 tight-batch workers racing the claim and the reaper, with no double sends and nothing stuck. Also covers a crash between send and completion.
@@ -162,6 +162,16 @@ npm run dev:web                 # dashboard (Vite dev server), in a second termi
 Before every commit: `npm run check` (format, lint, type-check, all tests).
 
 **API docs:** interactive OpenAPI 3.1 docs at [`/api/v1/docs`](https://relayforge-r0l7.onrender.com/api/v1/docs) (spec at `/api/v1/docs/json`), generated from the same Zod schemas the server validates with.
+
+**The engine in 5 seconds:** with `ALLOW_PRIVATE_DESTINATIONS=true` in `.env` and `npm run dev` running, `npm run demo` drives the real server over HTTP against its own chaos receiver. It shows one event fanned out to five receivers (success, 429 + `Retry-After` then success, 404, redirect, retries exhausted), signatures verified at the receiver, inbound dedupe, a double-clicked retry (`202` + `409`) and a forged request that is stored but never forwarded. It prints a dashboard link to the same event.
+
+```text
+  healthy receiver                             200                succeeded
+  rate-limited twice (429 + Retry-After: 1)    429 → 429 → 200    succeeded
+  wrong URL (404)                              404                dead (non_retryable_status)
+  redirects (302)                              302                dead (redirect)
+  always 429, max 3 attempts                   429 → 429 → 429    dead (exhausted)
+```
 
 **A destination that misbehaves on purpose:** `node apps/server/src/testing/chaos-cli.ts 4100` starts the chaos receiver locally. Set `ALLOW_PRIVATE_DESTINATIONS=true` in `.env` to point a destination at it (this is refused in production).
 
