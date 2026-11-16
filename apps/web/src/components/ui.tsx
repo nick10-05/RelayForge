@@ -40,6 +40,35 @@ export function Field({
   );
 }
 
+export function SelectField<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: T;
+  options: readonly { value: T; label: string }[];
+  onChange: (value: T) => void;
+}) {
+  return (
+    <label className="block space-y-1">
+      <span className="text-sm font-medium text-slate-700">{label}</span>
+      <select
+        className="block w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+        value={value}
+        onChange={(e) => onChange(e.target.value as T)}
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
     <div className={`rounded-lg border border-slate-200 bg-white p-4 ${className}`}>{children}</div>
@@ -67,9 +96,16 @@ export function Badge({
   );
 }
 
-/** The API's message for an ApiError, a generic one otherwise. */
+/** The API's message for an ApiError (plus the first validation issue), a generic one otherwise. */
 export function errorMessage(error: unknown): string {
-  if (error instanceof ApiError) return error.message;
+  if (error instanceof ApiError) {
+    const issues = (error.body as { issues?: { path: string; message: string }[] } | undefined)
+      ?.issues;
+    const first = issues?.[0];
+    if (!first) return error.message;
+    const field = first.path.replace(/^\//, '').replaceAll('/', '.');
+    return `${error.message}: ${field ? `${field} ` : ''}${first.message}`;
+  }
   return 'Something went wrong. Check your connection and try again.';
 }
 

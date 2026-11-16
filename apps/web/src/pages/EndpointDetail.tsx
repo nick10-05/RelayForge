@@ -14,6 +14,7 @@ import {
 } from '../components/ui.tsx';
 import type { Destination, Endpoint } from '../types.ts';
 import { endpointsKey } from './Endpoints.tsx';
+import { InboundSettings } from './InboundSettings.tsx';
 
 const endpointKey = (id: string) => ['endpoint', id] as const;
 const destinationsKey = (id: string) => ['destinations', id] as const;
@@ -126,13 +127,9 @@ function EndpointView({ endpoint }: { endpoint: Endpoint }) {
             Paused: events are still received and stored, but nothing is forwarded until you resume.
           </p>
         )}
-        <p className="text-xs text-slate-500">
-          Signature verification:{' '}
-          {endpoint.verification.scheme === 'none' ? 'off' : endpoint.verification.scheme}
-          {endpoint.dedupeSource !== 'none' &&
-            ` · de-duplication on ${endpoint.dedupeSource === 'header' ? 'header' : 'JSON field'} "${endpoint.dedupeName ?? ''}"`}
-        </p>
       </Card>
+
+      <InboundSettings endpoint={endpoint} onSaved={refresh} />
 
       <Destinations endpointId={endpoint.id} />
     </div>
