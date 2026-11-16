@@ -136,6 +136,7 @@ describe('logs never contain secrets', () => {
       // split could leave a 1–2 char fragment that appears in any log by chance — a flaky test.)
       apiKey.slice(-43),
       signature.slice('sha256='.length),
+      endpoint.slug, // the ingest URL is a capability (logged as /in/[REDACTED])
     ]) {
       expect(output.includes(secret), `log output contains a secret (${secret.slice(0, 4)}…)`).toBe(
         false,

@@ -17,6 +17,7 @@ import { eventRoutes } from './events/routes.ts';
 import { DEV_ORIGINS, createOriginCheck, parseOrigins } from './http/csrf.ts';
 import { registerErrorHandling } from './http/errors.ts';
 import { createIngestCounters, createLimits } from './http/limits.ts';
+import { serializeError, serializeRequest } from './http/log-serializers.ts';
 import type { IngestCounters, Limits } from './http/limits.ts';
 import { registerOpenApi } from './http/openapi.ts';
 import { isSpaPage, sendSpaIndex, spaRoutes } from './http/spa.ts';
@@ -122,6 +123,8 @@ export function buildApp({
     logger: {
       level: config.LOG_LEVEL,
       redact: { paths: REDACT_PATHS, censor: '[REDACTED]' },
+      // Capability URLs (/in/<slug>) and query parameters in database errors (log-serializers.ts).
+      serializers: { req: serializeRequest, err: serializeError },
       ...(logStream && { stream: logStream }),
     },
     // Each request gets an id in the logs; honour an incoming one for tracing across hops.
