@@ -160,7 +160,7 @@ One Docker image runs the API, the worker and the dashboard, and applies migrati
 
 ## Design
 
-The full design, with every decision and trade-off, is in [`docs/design.md`](docs/design.md): the delivery engine, idempotency, data model, security, operations, and a decisions log.
+The full design, with every decision and trade-off, is in [`docs/design.md`](docs/design.md): the delivery engine, idempotency, data model, security, operations, and a decisions log. The five choices that shape the engine have short decision records in [`docs/adr/`](docs/adr/README.md): Postgres as the queue, the lease as `next_attempt_at`, the invalid-signature policy, Node 24 with type stripping, and no ordering guarantee.
 
 **Out of scope, on purpose:** teams and roles, billing, multi-region, ordering guarantees, and exactly-once delivery.
 
