@@ -124,6 +124,7 @@ describe('logs never contain secrets', () => {
     const output = lines.join('');
     expect(output).toContain('incoming request'); // logging really was on
     expect(output).toContain('cannot open verify secret'); // and the error path ran
+    expect(output).not.toMatch(/"(pid|hostname)":/); // base: null keeps lines short
     for (const secret of [
       TEST_PASSWORD,
       sessionToken,

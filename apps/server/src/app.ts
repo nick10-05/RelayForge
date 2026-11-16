@@ -123,6 +123,9 @@ export function buildApp({
   const app = Fastify({
     logger: {
       level: config.LOG_LEVEL,
+      // No pid/hostname on every line: the platform already tags lines with the instance, and in a
+      // container the pid is always 1.
+      base: null,
       redact: { paths: REDACT_PATHS, censor: '[REDACTED]' },
       // Capability URLs (/in/<slug>) and query parameters in database errors (log-serializers.ts).
       serializers: { req: serializeRequest, err: serializeError },

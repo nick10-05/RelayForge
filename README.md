@@ -142,7 +142,7 @@ One Node process (API + worker, delivery concurrency 8) and Postgres 18 in Docke
 
 ## Run it locally
 
-You need **Node.js 24.15+** and **Docker**.
+You need **Node.js 24.16+** and **Docker**.
 
 ```bash
 git clone https://github.com/nick10-05/RelayForge.git
