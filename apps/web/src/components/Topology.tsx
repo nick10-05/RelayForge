@@ -244,7 +244,8 @@ export function Topology({
               strokeWidth="1.5"
             />
             <text x={X_OUT + 12} y={y - 2} className="fill-[#e9edf5] font-mono text-[10.5px]">
-              {clip(host(d.url), 26)}
+              <title>{d.url}</title>
+              {clip(host(d.url), 21)}
             </text>
             <text x={X_OUT + 12} y={y + 11} className="fill-[#5c6579] font-mono text-[9px]">
               {d.enabled ? `${d.maxAttempts} attempts · ${d.timeoutMs / 1000}s` : 'disabled'}
