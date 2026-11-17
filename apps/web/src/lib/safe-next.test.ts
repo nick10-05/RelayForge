@@ -5,13 +5,13 @@ describe('safeNext (no open redirect after login)', () => {
   test.each([
     ['/endpoints/abc?tab=events', '/endpoints/abc?tab=events'],
     ['/', '/'],
-    [null, '/endpoints'],
-    ['', '/endpoints'],
-    ['https://evil.example', '/endpoints'],
-    ['//evil.example/path', '/endpoints'],
-    ['/\\evil.example', '/endpoints'],
-    ['javascript:alert(1)', '/endpoints'],
-    ['endpoints', '/endpoints'],
+    [null, '/overview'],
+    ['', '/overview'],
+    ['https://evil.example', '/overview'],
+    ['//evil.example/path', '/overview'],
+    ['/\\evil.example', '/overview'],
+    ['javascript:alert(1)', '/overview'],
+    ['endpoints', '/overview'],
   ])('%j → %s', (input, expected) => {
     expect(safeNext(input)).toBe(expected);
   });

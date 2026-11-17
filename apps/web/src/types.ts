@@ -101,3 +101,34 @@ export type EventDetail = EventSummary & {
   signatureFailureReason: string | null;
   deliveries: Delivery[];
 };
+
+/** GET /api/v1/stats (optionally ?endpointId=). Counts cover retained data (7 days). */
+export type Stats = {
+  generatedAt: string;
+  endpointId: string | null;
+  endpoints: number;
+  events: {
+    stored: number;
+    last24h: number;
+    duplicatesReceived: number;
+    invalidSignature: number;
+    invalidSignatureDroppedSinceStart: number;
+  };
+  deliveries: {
+    pending: number;
+    inFlight: number;
+    succeeded: number;
+    dead: number;
+    /** Claimable right now (backlog). */
+    due: number;
+    deadByReason: Record<DeadReason, number>;
+  };
+  attemptsLast24h: {
+    total: number;
+    succeeded: number;
+    successRate: number | null;
+    latencyMs: { p50: number | null; p95: number | null };
+  };
+  /** By hour, oldest first: 25 buckets covering the last 24 h (both ends partial). */
+  series: { hour: string; events: number; delivered: number; failed: number }[];
+};

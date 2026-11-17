@@ -1,10 +1,20 @@
 import { useQuery } from '@tanstack/react-query';
-import { Link, useParams } from 'react-router';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router';
 import { get } from '../api.ts';
-import { Badge, Button, CopyButton, ErrorText, Spinner } from '../components/ui.tsx';
+import {
+  Badge,
+  Button,
+  CodeLine,
+  ErrorText,
+  LiveDot,
+  PageHeader,
+  Spinner,
+} from '../components/ui.tsx';
 import { LIST_POLL_MS, useEventList } from '../events.ts';
 import { formatBytes, timeAgo } from '../lib/format.ts';
 import type { Endpoint, EventSummary } from '../types.ts';
+import { BackLink } from './EndpointDetail.tsx';
 
 export function EventsPage() {
   const { endpointId = '' } = useParams();
@@ -15,19 +25,39 @@ export function EventsPage() {
   const list = useEventList(endpointId);
   const events = list.data?.pages.flatMap((p) => p.events) ?? [];
 
+  // Highlight rows that arrive while the page is open.
+  const known = useRef<Set<string> | null>(null);
+  const [fresh, setFresh] = useState<Set<string>>(new Set());
+  const firstIds = list.data?.pages[0]?.events.map((e) => e.id).join(',');
+  useEffect(() => {
+    const ids = firstIds ? firstIds.split(',') : [];
+    if (!list.isSuccess) return;
+    if (known.current === null) {
+      known.current = new Set(ids);
+      return;
+    }
+    const added = ids.filter((id) => !known.current!.has(id));
+    for (const id of added) known.current.add(id);
+    if (added.length) setFresh(new Set(added));
+  }, [firstIds, list.isSuccess]);
+
   return (
-    <div className="space-y-4">
-      <div className="space-y-1">
-        <Link to={`/endpoints/${endpointId}`} className="text-sm text-slate-500 hover:underline">
-          ← {endpoint.data?.endpoint.name ?? 'Endpoint'}
-        </Link>
-        <div className="flex items-center justify-between gap-3">
-          <h1 className="text-2xl font-semibold">Events</h1>
-          <span className="text-xs text-slate-500">
-            {list.isFetching ? 'refreshing…' : `auto-refresh every ${LIST_POLL_MS / 1000} s`}
+    <div className="space-y-6">
+      <PageHeader
+        back={
+          <BackLink to={`/endpoints/${endpointId}`}>
+            {endpoint.data?.endpoint.name ?? 'Endpoint'}
+          </BackLink>
+        }
+        eyebrow={
+          <span className="flex items-center gap-2">
+            <LiveDot tone="ember" />
+            {list.isFetching ? 'Refreshing…' : `Live · every ${LIST_POLL_MS / 1000} s`}
           </span>
-        </div>
-      </div>
+        }
+        title="Events"
+        description="Newest first. Open an event for its body, headers, deliveries and every attempt."
+      />
 
       {list.isPending && <Spinner />}
       <ErrorText error={list.error ?? endpoint.error} />
@@ -37,21 +67,22 @@ export function EventsPage() {
       )}
 
       {events.length > 0 && (
-        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-          <table className="w-full text-left text-sm">
-            <thead className="border-b border-slate-200 bg-slate-50 text-xs text-slate-500 uppercase">
-              <tr>
-                <th className="px-3 py-2 font-medium">Received</th>
-                <th className="px-3 py-2 font-medium">Method</th>
-                <th className="px-3 py-2 font-medium">Content type</th>
-                <th className="px-3 py-2 font-medium">Size</th>
-                <th className="px-3 py-2 font-medium">Signature</th>
-                <th className="px-3 py-2 font-medium">Duplicates</th>
+        <div className="panel overflow-x-auto p-0">
+          <table className="w-full min-w-[640px] text-left text-sm">
+            <thead>
+              <tr className="border-b border-ink-700/80 text-dim">
+                {['Received', 'Method', 'Content type', 'Size', 'Signature', 'Duplicates'].map(
+                  (h) => (
+                    <th key={h} className="eyebrow px-4 py-3 font-medium">
+                      {h}
+                    </th>
+                  ),
+                )}
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-ink-700/50">
               {events.map((e) => (
-                <EventRow key={e.id} event={e} />
+                <EventRow key={e.id} event={e} fresh={fresh.has(e.id)} />
               ))}
             </tbody>
           </table>
@@ -71,22 +102,39 @@ export function EventsPage() {
   );
 }
 
-function EventRow({ event: e }: { event: EventSummary }) {
+function EventRow({ event: e, fresh }: { event: EventSummary; fresh: boolean }) {
   const href = `/events/${e.id}`;
+  const navigate = useNavigate();
   return (
-    <tr className="hover:bg-slate-50">
-      <td className="px-3 py-2 whitespace-nowrap">
-        <Link to={href} className="text-indigo-700 hover:underline" title={e.receivedAt}>
+    <tr
+      className={`group cursor-pointer transition-colors hover:bg-ink-800/70 ${fresh ? 'animate-flash' : ''}`}
+      onClick={() => void navigate(href)}
+    >
+      <td className="px-4 py-2.5 whitespace-nowrap">
+        <Link
+          to={href}
+          className="flex items-center gap-2.5 text-fg group-hover:text-ember-200"
+          title={e.receivedAt}
+        >
+          <span
+            className={`size-1.5 rounded-full ${e.signatureStatus === 'invalid' ? 'bg-rose-400' : 'bg-ember-400'}`}
+          />
           {timeAgo(e.receivedAt)}
         </Link>
       </td>
-      <td className="px-3 py-2 font-mono text-xs">{e.method}</td>
-      <td className="max-w-48 truncate px-3 py-2 text-slate-600">{e.contentType ?? '—'}</td>
-      <td className="px-3 py-2 whitespace-nowrap text-slate-600">{formatBytes(e.sizeBytes)}</td>
-      <td className="px-3 py-2">
+      <td className="px-4 py-2.5 font-mono text-xs text-ice-300">{e.method}</td>
+      <td className="max-w-56 truncate px-4 py-2.5 font-mono text-xs text-muted">
+        {e.contentType ?? '—'}
+      </td>
+      <td className="px-4 py-2.5 font-mono text-xs whitespace-nowrap text-muted">
+        {formatBytes(e.sizeBytes)}
+      </td>
+      <td className="px-4 py-2.5">
         <SignatureBadge status={e.signatureStatus} />
       </td>
-      <td className="px-3 py-2 text-slate-600">{e.duplicateCount || '—'}</td>
+      <td className="px-4 py-2.5 font-mono text-xs text-muted">
+        {e.duplicateCount ? <Badge tone="amber">+{e.duplicateCount}</Badge> : '—'}
+      </td>
     </tr>
   );
 }
@@ -94,29 +142,36 @@ function EventRow({ event: e }: { event: EventSummary }) {
 export function SignatureBadge({ status }: { status: EventSummary['signatureStatus'] }) {
   switch (status) {
     case 'valid':
-      return <Badge tone="green">valid</Badge>;
+      return (
+        <Badge tone="green" dot>
+          valid
+        </Badge>
+      );
     case 'invalid':
-      return <Badge tone="red">invalid — not forwarded</Badge>;
+      return (
+        <Badge tone="red" dot>
+          invalid · not forwarded
+        </Badge>
+      );
     case 'not_checked':
-      return <span className="whitespace-nowrap text-slate-400">not checked</span>;
+      return <span className="text-xs whitespace-nowrap text-dim">not checked</span>;
   }
 }
 
 function EmptyState({ ingestPath }: { ingestPath: string }) {
   const command = `curl -X POST ${window.location.origin}${ingestPath} -H "content-type: application/json" -d "{\\"hello\\":\\"world\\"}"`;
   return (
-    <div className="space-y-2 rounded-lg border border-dashed border-slate-300 bg-white p-6">
-      <p className="font-medium">No events yet</p>
-      <p className="text-sm text-slate-600">
-        Point a webhook provider at the ingest URL, or send a test event. It appears here within a
-        few seconds.
-      </p>
-      <div className="flex items-center gap-2">
-        <code className="flex-1 truncate rounded bg-slate-100 px-2 py-1.5 font-mono text-xs">
-          {command}
-        </code>
-        <CopyButton text={command} />
+    <div className="panel dot-grid space-y-4 p-8">
+      <div className="space-y-1">
+        <p className="flex items-center gap-2 font-medium">
+          <LiveDot tone="ember" /> Listening for the first event
+        </p>
+        <p className="text-sm text-muted">
+          Point a webhook provider at the ingest URL, or send a test event. It appears here within a
+          few seconds.
+        </p>
       </div>
+      <CodeLine value={command} prompt="$" />
     </div>
   );
 }

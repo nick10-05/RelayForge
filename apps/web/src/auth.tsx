@@ -56,7 +56,8 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   const me = useMe();
   const location = useLocation();
   if (me.isPending) return <Spinner />;
-  if (me.isError) return <p className="text-sm text-red-700">Cannot reach the API right now.</p>;
+  if (me.isError)
+    return <p className="p-8 text-sm text-rose-300">Cannot reach the API right now.</p>;
   if (!me.data) {
     const next = location.pathname + location.search;
     return <Navigate to={`/login?next=${encodeURIComponent(next)}`} replace />;

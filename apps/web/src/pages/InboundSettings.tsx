@@ -36,7 +36,7 @@ export function InboundSettings({
 }) {
   return (
     <section className="space-y-3">
-      <h2 className="text-lg font-semibold">Incoming requests</h2>
+      <h2 className="text-lg font-semibold tracking-tight">Incoming requests</h2>
       <div className="grid gap-3 lg:grid-cols-2">
         <VerificationCard endpoint={endpoint} onSaved={onSaved} />
         <DedupeCard endpoint={endpoint} onSaved={onSaved} />
@@ -68,9 +68,9 @@ function VerificationCard({ endpoint, onSaved }: { endpoint: Endpoint; onSaved: 
     <Card className="space-y-3">
       <div>
         <h3 className="font-medium">Signature verification</h3>
-        <p className="text-xs text-slate-500">Now: {describeVerification(endpoint.verification)}</p>
+        <p className="text-xs text-dim">Now: {describeVerification(endpoint.verification)}</p>
       </div>
-      <p className="text-sm text-slate-600">
+      <p className="text-sm text-muted">
         Requests that fail the check get <code>401</code>, are kept for 24 h so you can see why, and
         are never forwarded or replayable.
       </p>
@@ -95,13 +95,13 @@ function VerificationCard({ endpoint, onSaved }: { endpoint: Endpoint; onSaved: 
         />
         {form.scheme === 'hmac' && (
           <>
-            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
               Presets:
               {HMAC_PRESETS.map((p) => (
                 <button
                   key={p.name}
                   type="button"
-                  className="rounded border border-slate-300 bg-white px-2 py-0.5 hover:bg-slate-50"
+                  className="rounded-md border border-ink-600 bg-ink-800 px-2 py-0.5 text-fg transition-colors hover:border-ember-500/50 hover:text-ember-200"
                   onClick={() => set({ header: p.header, prefix: p.prefix, encoding: p.encoding })}
                 >
                   {p.name}
@@ -152,10 +152,10 @@ function VerificationCard({ endpoint, onSaved }: { endpoint: Endpoint; onSaved: 
           <Button type="submit" disabled={save.isPending}>
             Save verification
           </Button>
-          {saved && <span className="text-sm text-emerald-700">Saved</span>}
+          {saved && <span className="text-sm text-mint-300">Saved</span>}
         </div>
         {problem && (
-          <p role="alert" className="text-sm text-red-700">
+          <p role="alert" className="text-sm text-rose-300">
             {problem}
           </p>
         )}
@@ -184,14 +184,14 @@ function DedupeCard({ endpoint, onSaved }: { endpoint: Endpoint; onSaved: () => 
     <Card className="space-y-3">
       <div>
         <h3 className="font-medium">De-duplication</h3>
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-dim">
           Now:{' '}
           {endpoint.dedupeSource === 'none'
             ? 'off: every request is a new event.'
             : `on ${endpoint.dedupeSource === 'header' ? 'header' : 'JSON field'} "${endpoint.dedupeName ?? ''}"`}
         </p>
       </div>
-      <p className="text-sm text-slate-600">
+      <p className="text-sm text-muted">
         Providers retry. With a key, a repeat of an event already stored gets <code>200</code> with
         the original id and is counted, not forwarded again.
       </p>
@@ -232,10 +232,10 @@ function DedupeCard({ endpoint, onSaved }: { endpoint: Endpoint; onSaved: () => 
           <Button type="submit" disabled={save.isPending}>
             Save de-duplication
           </Button>
-          {saved && <span className="text-sm text-emerald-700">Saved</span>}
+          {saved && <span className="text-sm text-mint-300">Saved</span>}
         </div>
         {problem && (
-          <p role="alert" className="text-sm text-red-700">
+          <p role="alert" className="text-sm text-rose-300">
             {problem}
           </p>
         )}

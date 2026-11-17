@@ -1,23 +1,42 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { del, get, patch, post } from '../api.ts';
+import { Sparkline } from '../components/charts.tsx';
+import { Topology } from '../components/Topology.tsx';
+import type { Arrival } from '../components/Topology.tsx';
 import {
   Badge,
   Button,
-  Card,
+  CodeLine,
   CopyButton,
   ErrorText,
   Field,
+  PageHeader,
   Spinner,
+  buttonClass,
   errorMessage,
 } from '../components/ui.tsx';
-import type { Destination, Endpoint } from '../types.ts';
+import { LIST_POLL_MS } from '../events.ts';
+import type { Destination, Endpoint, EventPage } from '../types.ts';
 import { endpointsKey } from './Endpoints.tsx';
 import { InboundSettings } from './InboundSettings.tsx';
+import { useStats } from './Overview.tsx';
 
 const endpointKey = (id: string) => ['endpoint', id] as const;
 const destinationsKey = (id: string) => ['destinations', id] as const;
+
+export function BackLink({ to, children }: { to: string; children: ReactNode }) {
+  return (
+    <Link
+      to={to}
+      className="inline-flex items-center gap-1.5 text-xs text-dim transition-colors hover:text-fg"
+    >
+      <span aria-hidden="true">←</span> {children}
+    </Link>
+  );
+}
 
 export function EndpointDetailPage() {
   const { endpointId = '' } = useParams();
@@ -29,11 +48,9 @@ export function EndpointDetailPage() {
   if (endpoint.isPending) return <Spinner />;
   if (endpoint.isError) {
     return (
-      <div className="space-y-2">
+      <div className="space-y-3">
         <ErrorText error={endpoint.error} />
-        <Link to="/endpoints" className="text-sm text-indigo-700 underline">
-          Back to endpoints
-        </Link>
+        <BackLink to="/endpoints">Back to endpoints</BackLink>
       </div>
     );
   }
@@ -64,74 +81,175 @@ function EndpointView({ endpoint }: { endpoint: Endpoint }) {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="space-y-1">
-          <Link to="/endpoints" className="text-sm text-slate-500 hover:underline">
-            ← Endpoints
-          </Link>
-          <h1 className="flex items-center gap-2 text-2xl font-semibold">
+      <PageHeader
+        back={<BackLink to="/endpoints">Endpoints</BackLink>}
+        eyebrow="Endpoint"
+        title={
+          <>
             {endpoint.name}
             {endpoint.paused ? (
-              <Badge tone="amber">paused</Badge>
+              <Badge tone="amber" dot>
+                paused
+              </Badge>
             ) : (
-              <Badge tone="green">active</Badge>
+              <Badge tone="green" dot>
+                live
+              </Badge>
             )}
-          </h1>
-        </div>
-        <div className="flex gap-2">
-          <Link
-            to={`/endpoints/${endpoint.id}/events`}
-            className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700"
-          >
-            View events
-          </Link>
-          <Button
-            variant="secondary"
-            disabled={togglePause.isPending}
-            onClick={() => togglePause.mutate()}
-          >
-            {endpoint.paused ? 'Resume deliveries' : 'Pause deliveries'}
-          </Button>
-          <Button
-            variant="danger"
-            disabled={remove.isPending}
-            onClick={() => {
-              if (
-                window.confirm(
-                  `Delete "${endpoint.name}" with all its events? This cannot be undone.`,
-                )
-              ) {
-                remove.mutate();
-              }
-            }}
-          >
-            Delete
-          </Button>
-        </div>
-      </div>
+          </>
+        }
+        actions={
+          <>
+            <Link to={`/endpoints/${endpoint.id}/events`} className={buttonClass('primary')}>
+              View events
+            </Link>
+            <Button
+              variant="secondary"
+              disabled={togglePause.isPending}
+              onClick={() => togglePause.mutate()}
+            >
+              {endpoint.paused ? 'Resume deliveries' : 'Pause deliveries'}
+            </Button>
+            <Button
+              variant="danger"
+              disabled={remove.isPending}
+              onClick={() => {
+                if (
+                  window.confirm(
+                    `Delete "${endpoint.name}" with all its events? This cannot be undone.`,
+                  )
+                ) {
+                  remove.mutate();
+                }
+              }}
+            >
+              Delete
+            </Button>
+          </>
+        }
+      />
       <ErrorText error={togglePause.error ?? remove.error} />
 
-      <Card className="space-y-2">
-        <h2 className="font-medium">Ingest URL</h2>
-        <p className="text-sm text-slate-600">
-          Give this URL to your webhook provider. It is secret: anyone who has it can send events.
-        </p>
-        <div className="flex items-center gap-2">
-          <code className="flex-1 truncate rounded bg-slate-100 px-2 py-1.5 font-mono text-sm">
-            {ingestUrl}
-          </code>
-          <CopyButton text={ingestUrl} />
+      <section className="panel space-y-3 p-5">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <p className="eyebrow">Ingest URL</p>
+          <p className="text-xs text-dim">Secret: anyone who has it can send events.</p>
         </div>
+        <CodeLine value={ingestUrl} prompt="POST" />
         {endpoint.paused && (
-          <p className="text-sm text-amber-800">
+          <p className="rounded-lg border border-amber-400/20 bg-amber-400/5 px-3 py-2 text-sm text-amber-300">
             Paused: events are still received and stored, but nothing is forwarded until you resume.
           </p>
         )}
-      </Card>
+      </section>
+
+      <Health endpoint={endpoint} />
 
       <InboundSettings endpoint={endpoint} onSaved={refresh} />
 
       <Destinations endpointId={endpoint.id} />
+    </div>
+  );
+}
+
+/** This endpoint's numbers and its own relay graph, both from real data. */
+function Health({ endpoint }: { endpoint: Endpoint }) {
+  const stats = useStats(endpoint.id);
+  const destinations = useQuery({
+    queryKey: destinationsKey(endpoint.id),
+    queryFn: () =>
+      get<{ destinations: Destination[] }>(`/api/v1/endpoints/${endpoint.id}/destinations`),
+  });
+  const recent = useQuery({
+    queryKey: ['recent-events', endpoint.id],
+    queryFn: () => get<EventPage>(`/api/v1/endpoints/${endpoint.id}/events?limit=10`),
+    refetchInterval: LIST_POLL_MS,
+  });
+
+  const known = useRef<Set<string> | null>(null);
+  const [arrivals, setArrivals] = useState<Arrival[]>([]);
+  useEffect(() => {
+    const events = recent.data?.events;
+    if (!events) return;
+    if (known.current === null) {
+      known.current = new Set(events.map((e) => e.id));
+      return;
+    }
+    const added = events.filter((e) => !known.current!.has(e.id));
+    for (const e of added) known.current.add(e.id);
+    if (added.length) setArrivals(added.map((e) => ({ key: e.id, endpointId: e.endpointId })));
+  }, [recent.data]);
+
+  const s = stats.data;
+  const rate = s?.attemptsLast24h.successRate;
+  return (
+    <section className="grid gap-4 lg:grid-cols-[1fr_1.4fr]">
+      <div className="panel grid grid-cols-2 gap-px overflow-hidden bg-ink-700/60 p-0">
+        <Cell
+          label="Events · 24 h"
+          value={s?.events.last24h.toLocaleString()}
+          spark={s?.series.map((p) => p.events)}
+        />
+        <Cell
+          label="Success · 24 h"
+          value={
+            s ? (rate == null ? '—' : `${(rate * 100).toFixed(rate === 1 ? 0 : 1)}%`) : undefined
+          }
+          spark={s?.series.map((p) => p.delivered)}
+          color="mint"
+        />
+        <Cell
+          label="Latency p50 / p95"
+          value={
+            s
+              ? s.attemptsLast24h.latencyMs.p50 === null
+                ? '—'
+                : `${s.attemptsLast24h.latencyMs.p50} / ${s.attemptsLast24h.latencyMs.p95} ms`
+              : undefined
+          }
+        />
+        <Cell
+          label="Backlog · dead"
+          value={s ? `${s.deliveries.due} · ${s.deliveries.dead}` : undefined}
+          spark={s?.series.map((p) => p.failed)}
+          color="rose"
+        />
+      </div>
+      <div className="panel p-5">
+        <div className="mb-1 flex items-center justify-between">
+          <p className="eyebrow">Route</p>
+          <p className="text-[11px] text-dim">Live: a packet runs per new event.</p>
+        </div>
+        <Topology
+          endpoints={[endpoint]}
+          destinations={{ [endpoint.id]: destinations.data?.destinations }}
+          arrivals={arrivals}
+        />
+      </div>
+    </section>
+  );
+}
+
+function Cell({
+  label,
+  value,
+  spark,
+  color = 'ember',
+}: {
+  label: string;
+  value: string | undefined;
+  spark?: number[] | undefined;
+  color?: 'ember' | 'mint' | 'rose';
+}) {
+  return (
+    <div className="relative overflow-hidden bg-ink-850 p-4">
+      <p className="eyebrow">{label}</p>
+      <p className="mt-2 font-mono text-xl">{value ?? '…'}</p>
+      {spark && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 opacity-60">
+          <Sparkline values={spark} color={color} className="h-8 w-full" />
+        </div>
+      )}
     </div>
   );
 }
@@ -148,18 +266,20 @@ function Destinations({ endpointId }: { endpointId: string }) {
 
   return (
     <section className="space-y-3">
-      <h2 className="text-lg font-semibold">Destinations</h2>
-      <p className="text-sm text-slate-600">
-        Every event is forwarded to each enabled destination, with retries and backoff.
-      </p>
+      <div>
+        <h2 className="text-lg font-semibold tracking-tight">Destinations</h2>
+        <p className="text-sm text-muted">
+          Every event is forwarded to each enabled destination, signed, with retries and backoff.
+        </p>
+      </div>
       {destinations.isPending && <Spinner />}
       <ErrorText error={destinations.error} />
       {destinations.data?.destinations.length === 0 && (
-        <p className="text-sm text-slate-600">
+        <p className="rounded-xl border border-dashed border-ink-700 p-5 text-sm text-muted">
           No destinations: events are stored but not forwarded.
         </p>
       )}
-      <ul className="space-y-2">
+      <ul className="panel divide-y divide-ink-700/70 overflow-hidden p-0 empty:hidden">
         {destinations.data?.destinations.map((d) => (
           <DestinationRow key={d.id} destination={d} onChange={refresh} />
         ))}
@@ -185,33 +305,39 @@ function DestinationRow({
   const error = toggle.error ?? remove.error;
 
   return (
-    <li>
-      <Card className="space-y-2">
-        <div className="flex flex-wrap items-center justify-between gap-2">
+    <li className="space-y-2 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <span
+            className={`size-2 shrink-0 rounded-full ${d.enabled ? 'bg-mint-400 shadow-[0_0_8px_rgb(79_227_161/0.7)]' : 'bg-ink-500'}`}
+          />
           <div className="min-w-0">
-            <p className="truncate font-mono text-sm">{d.url}</p>
-            <p className="text-xs text-slate-500">
+            <p className="truncate font-mono text-[13px]" title={d.url}>
+              {d.url}
+            </p>
+            <p className="text-xs text-dim">
               timeout {d.timeoutMs / 1000} s · up to {d.maxAttempts} attempts
+              {!d.enabled && ' · disabled'}
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            {d.enabled ? <Badge tone="green">enabled</Badge> : <Badge>disabled</Badge>}
-            <Button variant="secondary" disabled={toggle.isPending} onClick={() => toggle.mutate()}>
-              {d.enabled ? 'Disable' : 'Enable'}
-            </Button>
-            <Button
-              variant="danger"
-              disabled={remove.isPending}
-              onClick={() => {
-                if (window.confirm(`Remove destination ${d.url}?`)) remove.mutate();
-              }}
-            >
-              Remove
-            </Button>
-          </div>
         </div>
-        {error && <p className="text-sm text-red-700">{errorMessage(error)}</p>}
-      </Card>
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" disabled={toggle.isPending} onClick={() => toggle.mutate()}>
+            {d.enabled ? 'Disable' : 'Enable'}
+          </Button>
+          <Button
+            variant="ghost"
+            className="hover:text-rose-300"
+            disabled={remove.isPending}
+            onClick={() => {
+              if (window.confirm(`Remove destination ${d.url}?`)) remove.mutate();
+            }}
+          >
+            Remove
+          </Button>
+        </div>
+      </div>
+      {error && <p className="text-sm text-rose-300">{errorMessage(error)}</p>}
     </li>
   );
 }
@@ -241,10 +367,10 @@ function AddDestination({ endpointId, onAdded }: { endpointId: string; onAdded: 
   });
 
   return (
-    <Card className="space-y-3">
-      <h3 className="font-medium">Add a destination</h3>
+    <div className="panel space-y-4 p-5">
+      <p className="eyebrow">Add a destination</p>
       <form
-        className="grid gap-3 sm:grid-cols-[1fr_8rem_8rem_auto] sm:items-end"
+        className="grid gap-3 sm:grid-cols-[1fr_7rem_7rem_auto] sm:items-end"
         onSubmit={(e) => {
           e.preventDefault();
           setSecret(null);
@@ -277,30 +403,33 @@ function AddDestination({ endpointId, onAdded }: { endpointId: string; onAdded: 
           value={maxAttempts}
           onChange={(e) => setMaxAttempts(e.target.value)}
         />
-        <Button type="submit" disabled={add.isPending}>
+        <Button type="submit" className="py-2" disabled={add.isPending}>
           Add
         </Button>
       </form>
       <ErrorText error={add.error} />
       {secret && (
-        <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3">
-          <p className="text-sm font-medium text-amber-900">
-            Signing secret — copy it now, it is shown only once here.
-          </p>
-          <p className="text-xs text-amber-900">
-            Your receiver verifies X-RelayForge-Signature with it (Standard Webhooks algorithm).
-          </p>
+        <div className="animate-rise space-y-3 rounded-lg border border-ember-500/40 bg-ember-500/[0.06] p-4">
+          <div>
+            <p className="text-sm font-medium text-ember-200">
+              Signing secret: copy it now, it is shown only once.
+            </p>
+            <p className="mt-1 text-xs text-muted">
+              Your receiver verifies <code className="text-ember-300">X-RelayForge-Signature</code>{' '}
+              with it (Standard Webhooks algorithm).
+            </p>
+          </div>
           <div className="flex items-center gap-2">
-            <code className="flex-1 truncate rounded bg-white px-2 py-1.5 font-mono text-sm">
+            <code className="min-w-0 flex-1 truncate rounded-lg border border-ink-700 bg-ink-950 px-3 py-2 font-mono text-[13px]">
               {secret}
             </code>
             <CopyButton text={secret} />
-            <Button variant="secondary" onClick={() => setSecret(null)}>
+            <Button variant="ghost" onClick={() => setSecret(null)}>
               Done
             </Button>
           </div>
         </div>
       )}
-    </Card>
+    </div>
   );
 }

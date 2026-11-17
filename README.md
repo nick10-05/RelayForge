@@ -136,7 +136,7 @@ One Node process (API + worker, delivery concurrency 8) and Postgres 18 in Docke
 | Data | PostgreSQL 18, Drizzle ORM and migrations, raw SQL for claiming |
 | Outbound HTTP | `node:https` with a custom `lookup` (no HTTP client library) |
 | Crypto | `node:crypto`, `@node-rs/argon2` |
-| Dashboard | React 19, Vite 8, TanStack Query, Tailwind CSS 4 |
+| Dashboard | React 19, Vite 8, TanStack Query, Tailwind CSS 4; hand-written SVG charts and canvas globe (no chart or map library) |
 | Quality | Vitest, ESLint, Prettier, GitHub Actions, k6 load script |
 | Hosting | One Docker image on Render Free + Neon Postgres: **₹0 a month, no card** |
 
@@ -199,9 +199,10 @@ apps/
     auth/          passwords, sessions, API keys, route guards
     http/          CSRF, limits, hardening, log redaction, OpenAPI docs, SPA serving
     ops/           retention job, storage guard
-    stats/         GET /api/v1/stats: counts, backlog, 24 h delivery health
+    stats/         GET /api/v1/stats: counts, backlog, 24 h delivery health, hourly series
     testing/       chaos receiver, fake DNS, test helpers
-  web/src/         React dashboard: endpoints, events, attempt timeline, redeliver
+  web/src/         React dashboard: landing page with a canvas globe, live overview (charts,
+                   activity feed, relay topology), endpoints, events, attempt trace, redeliver
 docs/              design.md, deploy.md, adr/ (decision records)
 load/              k6 ingest load test
 ```
