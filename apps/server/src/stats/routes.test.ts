@@ -6,6 +6,7 @@ import { createIngestCounters } from '../http/limits.ts';
 import { createDestination, createEndpoint, createTestApp, signUp } from '../testing/helpers.ts';
 import type { TestUser } from '../testing/helpers.ts';
 
+type SeriesPoint = { hour: string; events: number; delivered: number; failed: number };
 type Stats = {
   endpointId: string | null;
   endpoints: number;
@@ -164,6 +165,18 @@ describe('GET /api/v1/stats', () => {
         latencyMs: { p50: 250, p95: 385 }, // percentile_cont over 100, 200, 300, 400
       },
     });
+
+    // Hourly series: 25 zero-filled buckets, oldest first, from the hour containing "24 h ago"
+    // to the current hour; the 25 h-old attempt is outside the window.
+    const { series } = response.json<Stats & { series: SeriesPoint[] }>();
+    expect(series).toHaveLength(25);
+    expect(new Date(series[0]!.hour).getTime()).toBeLessThanOrEqual(now - 24 * 60 * 60 * 1000);
+    expect(new Date(series[24]!.hour).getTime()).toBeLessThanOrEqual(now);
+    expect(new Date(series[24]!.hour).getTime()).toBeGreaterThan(now - 60 * 60 * 1000);
+    const sum = (k: 'events' | 'delivered' | 'failed') => series.reduce((n, p) => n + p[k], 0);
+    expect([sum('events'), sum('delivered'), sum('failed')]).toEqual([7, 2, 2]);
+    // Only the last bucket or two can hold it (a run may straddle an hour boundary).
+    expect(series.slice(0, 23).every((p) => p.events + p.delivered + p.failed === 0)).toBe(true);
 
     // Narrowed to one endpoint.
     const onlyB = (await stats(user, `?endpointId=${b.id}`)).json<Stats>();
