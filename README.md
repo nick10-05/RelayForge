@@ -1,20 +1,32 @@
-<h1 align="center">RelayForge</h1>
-
 <p align="center">
-  <strong>A durable webhook relay. Nothing a provider sends you gets lost, and every delivery is on the record.</strong>
+  <a href="https://relayforge-r0l7.onrender.com"><img src="docs/assets/banner.svg" alt="RelayForge: a durable webhook relay. Nothing a provider sends you gets lost." width="100%"></a>
 </p>
 
 <p align="center">
   <a href="https://github.com/nick10-05/RelayForge/actions/workflows/ci.yml"><img src="https://github.com/nick10-05/RelayForge/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/badge/tests-555%20on%20real%20Postgres-34D399" alt="555 tests on real Postgres">
+  <img src="https://img.shields.io/badge/coverage-~95%25-34D399" alt="About 95% server line coverage">
   <img src="https://img.shields.io/badge/Node.js-24_LTS-339933?logo=nodedotjs&logoColor=white" alt="Node.js 24">
   <img src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white" alt="TypeScript strict">
   <img src="https://img.shields.io/badge/PostgreSQL-18-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL 18">
-  <img src="https://img.shields.io/badge/hosting-%E2%82%B90%2Fmonth-34D399" alt="Runs at ₹0 a month">
+  <img src="https://img.shields.io/badge/hosting-%E2%82%B90%2Fmonth-F59E0B" alt="Runs at ₹0 a month">
 </p>
 
----
+<p align="center">
+  <b><a href="https://relayforge-r0l7.onrender.com">Live demo</a></b> ·
+  <a href="https://relayforge-r0l7.onrender.com/api/v1/docs">API docs</a> ·
+  <a href="docs/design.md">Design doc</a> ·
+  <a href="docs/adr/README.md">Decision records</a> ·
+  <a href="docs/deploy.md">Deploy guide</a>
+</p>
 
-## The problem
+## ⚡ At a glance
+
+| 🛡️ Never loses an event | 🔁 Retries done right | 🔐 Secure by default | 🧪 Proven, not claimed |
+|---|---|---|---|
+| Acknowledges only after the event is committed; a transactional outbox writes the event and its deliveries together | `SKIP LOCKED` claiming, leases, fenced completion, full-jitter backoff and a dead-letter state | SSRF-safe outbound client, Standard Webhooks signing, AES-256-GCM secrets, argon2id, tenant isolation | 555 tests on real Postgres, a chaos receiver, 665 req/s peak ingest, and 38,260 of 38,260 events delivered after a mid-run crash |
+
+## 🎯 The problem
 
 Webhooks from Stripe, GitHub, Razorpay or Shopify are fire-and-forget HTTP calls. If your server is mid-deploy, or a bug returns `500`, the provider retries a few times, gives up, and you are left with no record of what was sent.
 
@@ -25,7 +37,7 @@ Webhooks from Stripe, GitHub, Razorpay or Shopify are fire-and-forget HTTP calls
 3. **Forwards** it to one or more destinations with retries, exponential backoff, crash recovery and a dead-letter state.
 4. Lets you **inspect and redeliver** any event from a dashboard or the API.
 
-## How it works
+## 🧩 How it works
 
 ```mermaid
 flowchart LR
@@ -68,7 +80,7 @@ stateDiagram-v2
 
 Backoff is `random(0, min(1 h, 30 s × 2^(attempt−1)))` with **full jitter**, and 10 attempts by default (about 3 hours worst case), configurable per destination.
 
-## What makes it reliable
+## 🛡️ What makes it reliable
 
 - **Acknowledge only after commit.** A crash before the commit makes the provider retry; a crash after it leaves the delivery rows in place for the worker.
 - **`SKIP LOCKED` claiming.** Concurrent workers take disjoint rows without blocking each other.
@@ -90,7 +102,7 @@ Backoff is `random(0, min(1 h, 30 s × 2^(attempt−1)))` with **full jitter**, 
 | `X-RelayForge-Replay` | `true` on manual redeliveries |
 | `X-RelayForge-Timestamp` / `X-RelayForge-Signature` | Authenticity (Standard Webhooks algorithm) |
 
-## Security
+## 🔐 Security
 
 - **SSRF-safe outbound client** built on `node:https` with a pinned DNS lookup. Every resolved address is checked against a blocklist of private, loopback, link-local and other internal IPv4 and IPv6 ranges. URLs are checked at creation *and* at send time to stop DNS rebinding. No redirects, and size and time caps on every request.
 - **Outbound signing** with the Standard Webhooks algorithm (HMAC-SHA256) and zero-downtime secret rotation.
@@ -101,7 +113,7 @@ Backoff is `random(0, min(1 h, 30 s × 2^(attempt−1)))` with **full jitter**, 
 - **Tenant isolation:** every query is scoped to its owner, and cross-tenant access returns `404`.
 - **Abuse limits:** 1 MB body cap, per-endpoint token-bucket rate limits, a storage guard that returns `503` before the free database fills up, and automatic retention cleanup.
 
-## Tested like it matters
+## 🧪 Tested like it matters
 
 **46 test files (555 tests)** run in CI, and the integration tests use a **real PostgreSQL 18**, not mocks. Server line coverage is **about 95%** (`npm run test:coverage`); what's left is mostly entry points and the real-DNS resolver. They include:
 
@@ -112,7 +124,7 @@ Backoff is `random(0, min(1 h, 30 s × 2^(attempt−1)))` with **full jitter**, 
 
 Every push runs format check → lint → type-check → tests → dashboard build → Docker image build.
 
-### Load numbers (measured locally)
+### 📈 Load numbers (measured locally)
 
 One Node process (API + worker, delivery concurrency 8) and Postgres 18 in Docker on a Windows laptop, k6 at a **constant arrival rate** ([`load/ingest.js`](load/ingest.js)), destination = the local chaos receiver. Measured 16 Nov 2026 unless marked.
 
@@ -127,7 +139,7 @@ One Node process (API + worker, delivery concurrency 8) and Postgres 18 in Docke
 
 **Why not on the live site:** Render Free has 0.1 CPU and the per-endpoint ingest limit is 20 req/s by design, so a load test there would measure the free tier and the rate limiter, not the engine.
 
-## Tech stack
+## 🧰 Tech stack
 
 | Layer | Choice |
 |---|---|
@@ -140,7 +152,10 @@ One Node process (API + worker, delivery concurrency 8) and Postgres 18 in Docke
 | Quality | Vitest, ESLint, Prettier, GitHub Actions, k6 load script |
 | Hosting | One Docker image on Render Free + Neon Postgres: **₹0 a month, no card** |
 
-## Run it locally
+## 💻 Run it locally
+
+<details>
+<summary><b>Setup, demo script, chaos receiver and load test</b></summary>
 
 You need **Node.js 24.16+** and **Docker**.
 
@@ -177,19 +192,24 @@ Before every commit: `npm run check` (format, lint, type-check, all tests).
 
 **Load test:** `k6 run load/ingest.js` (see the comments in the file for rate, duration and fan-out options).
 
-## Deploy
+</details>
+
+## 🚀 Deploy
 
 **Live:** [relayforge-r0l7.onrender.com](https://relayforge-r0l7.onrender.com) (Render Free in Singapore: after 15 idle minutes the first request takes about a minute while the service wakes up).
 
 One Docker image runs the API, the worker and the dashboard, and applies migrations on start. [`docs/deploy.md`](docs/deploy.md) walks through Render Free + Neon step by step, including what the free tier means for delivery timing.
 
-## Design
+## 📐 Design
 
 The full design, with every decision and trade-off, is in [`docs/design.md`](docs/design.md): the delivery engine, idempotency, data model, security, operations, and a decisions log. The five choices that shape the engine have short decision records in [`docs/adr/`](docs/adr/README.md): Postgres as the queue, the lease as `next_attempt_at`, the invalid-signature policy, Node 24 with type stripping, and no ordering guarantee.
 
 **Out of scope, on purpose:** teams and roles, billing, multi-region, ordering guarantees, and exactly-once delivery.
 
-## Project layout
+## 🗂️ Project layout
+
+<details>
+<summary><b>Where everything lives</b></summary>
 
 ```
 apps/
@@ -206,3 +226,5 @@ apps/
 docs/              design.md, deploy.md, adr/ (decision records)
 load/              k6 ingest load test
 ```
+
+</details>
