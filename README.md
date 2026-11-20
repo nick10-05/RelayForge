@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/Node.js-24_LTS-339933?logo=nodedotjs&logoColor=white" alt="Node.js 24">
   <img src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white" alt="TypeScript strict">
   <img src="https://img.shields.io/badge/PostgreSQL-18-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL 18">
-  <img src="https://img.shields.io/badge/hosting-%E2%82%B90%2Fmonth-F59E0B" alt="Runs at ₹0 a month">
+  <img src="https://img.shields.io/badge/hosting-%E2%82%B90%2Fmonth-6366F1" alt="Runs at ₹0 a month">
 </p>
 
 <p align="center">
@@ -138,6 +138,19 @@ One Node process (API + worker, delivery concurrency 8) and Postgres 18 in Docke
 **Where it tops out:** ingest ≈ 665 req/s; delivery is the bottleneck, because every attempt opens a fresh TCP/TLS connection (deliberate: the socket must connect to the address the SSRF guard just vetted) and records its result in a transaction. Raising worker concurrency to 32 gave ≈ 440/s (14 Nov).
 
 **Why not on the live site:** Render Free has 0.1 CPU and the per-endpoint ingest limit is 20 req/s by design, so a load test there would measure the free tier and the rate limiter, not the engine.
+
+## ⚖️ Engineering decisions & trade-offs
+
+Each one has a short decision record in [`docs/adr/`](docs/adr/README.md).
+
+| Decision | Why | What it costs |
+|---|---|---|
+| **Postgres is the queue** ([ADR 0001](docs/adr/0001-postgres-as-the-queue.md)) | Storing the event and queuing its deliveries happen in one transaction, so neither can exist without the other; no broker to run or pay for | Lower peak throughput than a dedicated broker; fine at this scale |
+| **The lease is `next_attempt_at`** ([ADR 0002](docs/adr/0002-lease-stored-as-next-attempt-at.md)) | A crashed worker's row simply becomes due again, with no sweeper job and no lock or open transaction held during the HTTP call | A worker that is slow, not dead, can be overtaken, so completion is fenced on the attempt number |
+| **Forged requests are stored, never forwarded** ([ADR 0003](docs/adr/0003-invalid-signature-policy.md)) | Developers can see why verification failed, and forged traffic still can't reach a destination | Capped storage (64 KB, 24 h) and a stricter rate limit for those requests |
+| **No ordering guarantee** ([ADR 0005](docs/adr/0005-no-ordering-guarantee.md)) | Ordering would let one failing event block every later one for hours, and rule out concurrency, fan-out and replay | Receivers de-duplicate on `X-RelayForge-Id` and must not assume order, the same contract Stripe and GitHub give |
+| **Node 24 runs TypeScript by type stripping** ([ADR 0004](docs/adr/0004-node-24-with-type-stripping.md)) | No build step for the server: the code you read is the code that runs | Syntax that needs code generation (`enum` and similar) is off-limits |
+| **A fresh connection for every delivery** | The socket must connect to the exact address the SSRF guard just vetted | Delivery tops out around 210–440/s locally; connection reuse is the known next step |
 
 ## 🧰 Tech stack
 
