@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/nick10-05/RelayForge/actions/workflows/ci.yml"><img src="https://github.com/nick10-05/RelayForge/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/tests-555%20on%20real%20Postgres-34D399" alt="555 tests on real Postgres">
-  <img src="https://img.shields.io/badge/coverage-~95%25-34D399" alt="About 95% server line coverage">
+  <img src="https://img.shields.io/badge/server%20coverage-~95%25-34D399" alt="About 95% server line coverage">
   <img src="https://img.shields.io/badge/Node.js-24_LTS-339933?logo=nodedotjs&logoColor=white" alt="Node.js 24">
   <img src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white" alt="TypeScript strict">
   <img src="https://img.shields.io/badge/PostgreSQL-18-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL 18">
@@ -24,7 +24,7 @@
 
 | 🛡️ Never loses an event | 🔁 Retries done right | 🔐 Secure by default | 🧪 Proven, not claimed |
 |---|---|---|---|
-| Acknowledges only after the event is committed; a transactional outbox writes the event and its deliveries together | `SKIP LOCKED` claiming, leases, fenced completion, full-jitter backoff and a dead-letter state | SSRF-safe outbound client, Standard Webhooks signing, AES-256-GCM secrets, argon2id, tenant isolation | 555 tests on real Postgres, a chaos receiver, 665 req/s peak ingest, and 38,260 of 38,260 events delivered after a mid-run crash |
+| Acknowledges only after the event is committed; a transactional outbox writes the event and its deliveries together | `SKIP LOCKED` claiming, leases, fenced completion, full-jitter backoff and a dead-letter state | SSRF-safe outbound client, Standard Webhooks signing, AES-256-GCM secrets, argon2id, tenant isolation | 555 tests on real Postgres, a chaos receiver, 665 req/s peak ingest in a local k6 run, and all 38,260 events delivered in a crash test where the server was killed mid-run |
 
 ## 🎯 The problem
 
